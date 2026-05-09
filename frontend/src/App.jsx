@@ -1825,7 +1825,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                     onBlur={() => saveContact(activeShop.id)}
                     style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
                   />
-                  <a>
+                  <a
                     href={drawerPhone ? `tel:${drawerPhone}` : undefined}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
@@ -1835,7 +1835,9 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                       fontSize: 18, textDecoration: "none",
                       border: `1px solid ${drawerPhone ? "#14532d" : "#1f2937"}`,
                     }}
-                  >📞</a>
+                  >
+                    📞
+                  </a>
                 </div>
                 <input
                   className="field"
