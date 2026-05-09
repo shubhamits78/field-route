@@ -1608,9 +1608,320 @@ useEffect(() => {
 }
 
 // ============================================================
-// ORDER TAB — untouched logic, refreshed UI
+// ORDER TAB — tap to log, order history, shop profile
 // ============================================================
-function OrderTab({ masterShops, locationNames }) {
+function OrderTab({ masterShops, locationNames, currentLocationNum }) {
+  // orders stored as { shopId: [{ amount, date, note }] }
+  const [orders, setOrders] = useState(() => {
+    const s = localStorage.getItem("frp_orders_v2");
+    return s ? JSON.parse(s) : {};
+  });
+  const [activeLocTab, setActiveLocTab] = useState(currentLocationNum || 1);
+  const [activeShop, setActiveShop] = useState(null); // shop object for drawer
+  const [drawerAmount, setDrawerAmount] = useState("");
+  const [drawerNote, setDrawerNote] = useState("");
+  const [drawerOwner, setDrawerOwner] = useState("");
+  const [drawerPhone, setDrawerPhone] = useState("");
+
+  // Sync location tab when currentLocationNum changes (user switches day in Route)
+  useEffect(() => {
+    if (currentLocationNum) setActiveLocTab(currentLocationNum);
+  }, [currentLocationNum]);
+
+  const shops = masterShops[activeLocTab] || [];
+
+  const getHistory = (shopId) => orders[shopId] || [];
+  const getTotal = (shopId) => getHistory(shopId).reduce((sum, e) => sum + Number(e.amount), 0);
+
+  const saveOrders = (next) => {
+    setOrders(next);
+    localStorage.setItem("frp_orders_v2", JSON.stringify(next));
+  };
+
+  const addEntry = () => {
+    if (!drawerAmount || isNaN(drawerAmount) || !activeShop) return;
+    const entry = {
+      amount: Number(drawerAmount),
+      date: getTodayDate(),
+      note: drawerNote.trim(),
+    };
+    const prev = orders[activeShop.id] || [];
+    saveOrders({ ...orders, [activeShop.id]: [entry, ...prev] });
+    setDrawerAmount("");
+    setDrawerNote("");
+  };
+
+  // Save contact details per shop in localStorage
+  const contactKey = (shopId) => `frp_contact_${shopId}`;
+  const loadContact = (shopId) => {
+    const s = localStorage.getItem(contactKey(shopId));
+    return s ? JSON.parse(s) : { owner: "", phone: "" };
+  };
+  const saveContact = (shopId) => {
+    localStorage.setItem(contactKey(shopId), JSON.stringify({ owner: drawerOwner, phone: drawerPhone }));
+  };
+
+  const openDrawer = (shop) => {
+    setActiveShop(shop);
+    const contact = loadContact(shop.id);
+    setDrawerOwner(contact.owner);
+    setDrawerPhone(contact.phone);
+    setDrawerAmount("");
+    setDrawerNote("");
+  };
+
+  const closeDrawer = () => {
+    if (activeShop) saveContact(activeShop.id);
+    setActiveShop(null);
+  };
+
+  const deleteEntry = (shopId, idx) => {
+    const updated = (orders[shopId] || []).filter((_, i) => i !== idx);
+    saveOrders({ ...orders, [shopId]: updated });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#080d14", position: "relative" }}>
+
+      {/* Location tabs — synced to current day */}
+      <div style={{
+        display: "flex", overflowX: "auto", scrollbarWidth: "none",
+        borderBottom: "1px solid #111827", flexShrink: 0,
+      }}>
+        {[1,2,3,4,5,6].map(n => {
+          const label = locationNames[n] || `Loc ${n}`;
+          const count = (masterShops[n] || []).length;
+          return (
+            <button key={n} onClick={() => setActiveLocTab(n)} style={{
+              padding: "10px 16px", background: "transparent", border: "none",
+              color: activeLocTab === n ? "#f97316" : "#4b5563",
+              fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
+              cursor: "pointer",
+              borderBottom: activeLocTab === n ? "2px solid #f97316" : "2px solid transparent",
+              whiteSpace: "nowrap", flexShrink: 0, transition: "all 0.15s",
+            }}>
+              {label}
+              <span style={{
+                display: "inline-block", marginLeft: 5,
+                background: activeLocTab === n ? "#1c1007" : "#111827",
+                color: activeLocTab === n ? "#f97316" : "#374151",
+                borderRadius: 8, padding: "0 5px", fontSize: 9,
+              }}>{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Shop list — tap to open drawer */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px 80px" }}>
+        {shops.length === 0 ? (
+          <div className="empty" style={{ paddingTop: 48 }}>
+            <div className="empty-icon">📦</div>
+            <div className="empty-text">No shops here yet.<br />Add from the Route tab.</div>
+          </div>
+        ) : shops.map(shop => {
+          const total = getTotal(shop.id);
+          const hit = total >= 1000;
+          const pct = Math.min((total / 1000) * 100, 100);
+          const lastEntry = (orders[shop.id] || [])[0];
+          return (
+            <div
+              key={shop.id}
+              onClick={() => openDrawer(shop)}
+              style={{
+                background: hit ? "#081510" : "#0d1421",
+                border: `1px solid ${hit ? "#0f2d1a" : "#131e2e"}`,
+                borderRadius: 12, padding: "13px 14px", marginBottom: 7,
+                cursor: "pointer", transition: "all 0.12s",
+                display: "flex", alignItems: "center", gap: 12,
+              }}
+            >
+              {/* Status dot */}
+              <div style={{
+                width: 8, height: 8, minWidth: 8, borderRadius: "50%",
+                background: hit ? "#10b981" : total > 0 ? "#f97316" : "#1f2937",
+              }} />
+
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
+                  fontSize: 14, color: "#f3f4f6",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>{shop.name}</div>
+                {lastEntry && (
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
+                    Last: ₹{lastEntry.amount.toLocaleString()} · {lastEntry.date}
+                  </div>
+                )}
+              </div>
+
+              {/* Total + progress */}
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{
+                  fontFamily: "'JetBrains Mono',monospace", fontSize: 15,
+                  fontWeight: 700, color: hit ? "#10b981" : total > 0 ? "#f97316" : "#374151",
+                }}>₹{total.toLocaleString()}</div>
+                <div style={{ width: 60, height: 3, background: "#1f2937", borderRadius: 4, marginTop: 4 }}>
+                  <div style={{
+                    height: "100%", borderRadius: 4,
+                    background: hit ? "#10b981" : "#f97316",
+                    width: `${pct}%`, transition: "width 0.4s ease",
+                  }} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* SHOP DRAWER */}
+      {activeShop && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 100,
+          background: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "flex-end",
+        }} onClick={closeDrawer}>
+          <div style={{
+            background: "#111827", borderRadius: "20px 20px 0 0",
+            border: "1px solid #1f2937", borderBottom: "none",
+            width: "100%", maxHeight: "88vh",
+            display: "flex", flexDirection: "column",
+            overflow: "hidden",
+          }} onClick={e => e.stopPropagation()}>
+
+            {/* Handle + header */}
+            <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid #1f2937", flexShrink: 0 }}>
+              <div style={{ width: 36, height: 4, background: "#374151", borderRadius: 4, margin: "0 auto 14px" }} />
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
+                    fontSize: 16, color: "#f3f4f6",
+                  }}>{activeShop.name}</div>
+                  <div style={{
+                    fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
+                    color: "#f97316", marginTop: 2,
+                  }}>₹{getTotal(activeShop.id).toLocaleString()} this month</div>
+                </div>
+                <button onClick={closeDrawer} style={{
+                  background: "none", border: "none", color: "#4b5563",
+                  fontSize: 22, cursor: "pointer", lineHeight: 1, flexShrink: 0,
+                }}>×</button>
+              </div>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 24px" }}>
+
+              {/* Contact details */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>CONTACT</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    className="field"
+                    placeholder="Owner name"
+                    value={drawerOwner}
+                    onChange={e => setDrawerOwner(e.target.value)}
+                    onBlur={() => saveContact(activeShop.id)}
+                    style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
+                  />
+                  
+                    href={drawerPhone ? `tel:${drawerPhone}` : undefined}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      width: 40, borderRadius: 10, flexShrink: 0,
+                      background: drawerPhone ? "#0a2218" : "#1f2937",
+                      color: drawerPhone ? "#10b981" : "#374151",
+                      fontSize: 18, textDecoration: "none",
+                      border: `1px solid ${drawerPhone ? "#14532d" : "#1f2937"}`,
+                    }}
+                  >📞</a>
+                </div>
+                <input
+                  className="field"
+                  placeholder="Phone number"
+                  value={drawerPhone}
+                  type="tel"
+                  onChange={e => setDrawerPhone(e.target.value)}
+                  onBlur={() => saveContact(activeShop.id)}
+                  style={{ marginTop: 8, padding: "8px 11px", fontSize: 12 }}
+                />
+              </div>
+
+              {/* Log order */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>LOG ORDER</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <input
+                    className="field"
+                    type="number"
+                    placeholder="₹ Amount"
+                    value={drawerAmount}
+                    onChange={e => setDrawerAmount(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && addEntry()}
+                    style={{ flex: 1, padding: "10px 12px", fontSize: 14 }}
+                    autoFocus
+                  />
+                  <button onClick={addEntry} disabled={!drawerAmount} style={{
+                    background: drawerAmount ? "#f97316" : "#1f2937",
+                    border: "none", color: drawerAmount ? "#080d14" : "#374151",
+                    borderRadius: 10, padding: "10px 16px", cursor: "pointer",
+                    fontFamily: "'Space Grotesk',sans-serif", fontSize: 13, fontWeight: 700,
+                    transition: "all 0.15s", flexShrink: 0,
+                  }}>Add</button>
+                </div>
+                <input
+                  className="field"
+                  placeholder="Note (optional) — e.g. paid cash, follow up"
+                  value={drawerNote}
+                  onChange={e => setDrawerNote(e.target.value)}
+                  style={{ padding: "8px 11px", fontSize: 12 }}
+                />
+              </div>
+
+              {/* Order history */}
+              <div>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>
+                  HISTORY · {getHistory(activeShop.id).length} ENTRIES
+                </div>
+                {getHistory(activeShop.id).length === 0 ? (
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#1f2937", padding: "12px 0" }}>
+                    No orders yet. Log your first one above.
+                  </div>
+                ) : getHistory(activeShop.id).map((entry, idx) => (
+                  <div key={idx} style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "10px 0",
+                    borderBottom: idx < getHistory(activeShop.id).length - 1 ? "1px solid #111827" : "none",
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontFamily: "'JetBrains Mono',monospace", fontWeight: 700,
+                        fontSize: 14, color: "#f97316",
+                      }}>₹{Number(entry.amount).toLocaleString()}</div>
+                      {entry.note && (
+                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
+                          {entry.note}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151" }}>
+                      {entry.date}
+                    </div>
+                    <button onClick={() => deleteEntry(activeShop.id, idx)} style={{
+                      background: "none", border: "none", color: "#374151",
+                      fontSize: 16, cursor: "pointer", padding: "0 2px",
+                    }}>×</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ============================================================
 // ONE-OFF ADD
