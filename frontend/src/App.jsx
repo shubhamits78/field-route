@@ -90,24 +90,26 @@ function exportShops(masterShops) {
   URL.revokeObjectURL(url);
 }
 
-async function importShops(file, updateMasterShops, setStatus) {
+async function importShops(file, setMasterShops, setStatus) {
   try {
     const text = await file.text();
     const data = JSON.parse(text);
     const shops = data.masterShops;
     if (!shops || typeof shops !== "object") throw new Error("Invalid file format");
+    const next = {};
     for (const [locNum, locShops] of Object.entries(shops)) {
-  const patched = locShops.map(s => ({
-    frequency: "weekly",
-    openTime: "09:00",
-    closeTime: "20:00",
-    lastVisited: null,
-    visitNote: "",
-    ...s,
-  }));
-  await saveMasterLocation(Number(locNum), patched);
-  updateMasterShops(Number(locNum), () => patched);
-}
+      const patched = locShops.map(s => ({
+        frequency: "weekly",
+        openTime: "09:00",
+        closeTime: "20:00",
+        lastVisited: null,
+        visitNote: "",
+        ...s,
+      }));
+      next[Number(locNum)] = patched;
+      await saveMasterLocation(Number(locNum), patched);
+    }
+    setMasterShops(prev => ({ ...prev, ...next }));
     setStatus("✓ Shops imported successfully");
   } catch (e) {
     setStatus(`✗ Import failed: ${e.message}`);
@@ -1684,49 +1686,80 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ── SETTINGS TAB ── */}
+              {/* ── SETTINGS TAB ── */}
                 {activeTab === "settings" && (
-  <div className="settings-section">
-    <div style={{ fontSize: 11, color: "#4b5563", fontFamily: "'DM Mono',monospace", marginBottom: 4 }}>📤 EXPORT / IMPORT SHOPS</div>
-    <button className="btn-add" onClick={() => exportShops(masterShops)}>⬇ Export All Shops</button>
-    <label style={{
-      display: "block", padding: 11, background: "#1e2633", color: "#e8e3db",
-      borderRadius: 8, fontFamily: "'Syne',sans-serif", fontWeight: 800,
-      fontSize: 13, cursor: "pointer", textAlign: "center",
-    }}>
-      ⬆ Import Shops
-      <input type="file" accept=".json" style={{ display: "none" }}
-        onChange={e => {
-          const file = e.target.files[0];
-          if (file) importShops(file, updateMasterShops, setStatus);
-          e.target.value = "";
-        }}
-      />
-    </label>
-    <div style={{ fontSize: 10, color: "#374151", fontFamily: "'DM Mono',monospace" }}>
-      Import will replace existing shops per location.
-    </div>
-    <div style={{ height: 1, background: "#1e2633", margin: "8px 0" }} />
-                    <div>
-                      <div className="settings-label">🟢 Start Point</div>
-                      <input className="field" placeholder="Home address or paste Google Maps link"
-                        value={homeAddress} onChange={e => setHomeAddress(e.target.value)}
-                        style={{ marginBottom: 8 }} />
-                      <button className="btn-primary" onClick={() => saveHomeOffice("home", homeAddress)} disabled={!homeAddress.trim()}>
-                        Save Start
-                      </button>
-                      {homeCoords && <div className="settings-saved" style={{ marginTop: 6 }}>✓ {homeAddress.substring(0, 44)}</div>}
+                  <div style={{ padding: "16px 14px", display: "flex", flexDirection: "column", gap: 20 }}>
+
+                    {/* Route points */}
+                    <div style={{ background: "#0d1421", border: "1px solid #1f2937", borderRadius: 14, padding: "14px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151", letterSpacing: 1.5 }}>ROUTE POINTS</div>
+                      <div>
+                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#10b981", marginBottom: 6 }}>● START</div>
+                        <input className="field" placeholder="Home address or Google Maps link"
+                          value={homeAddress} onChange={e => setHomeAddress(e.target.value)}
+                          style={{ marginBottom: 8 }} />
+                        <button className="btn-primary" onClick={() => saveHomeOffice("home", homeAddress)} disabled={!homeAddress.trim()}>
+                          Save Start
+                        </button>
+                        {homeCoords && <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#10b981", marginTop: 6 }}>✓ {homeAddress.substring(0, 44)}</div>}
+                      </div>
+                      <div style={{ height: 1, background: "#1f2937" }} />
+                      <div>
+                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#ef4444", marginBottom: 6 }}>● END</div>
+                        <input className="field" placeholder="Office address or Google Maps link"
+                          value={officeAddress} onChange={e => setOfficeAddress(e.target.value)}
+                          style={{ marginBottom: 8 }} />
+                        <button className="btn-primary" onClick={() => saveHomeOffice("office", officeAddress)} disabled={!officeAddress.trim()}>
+                          Save End
+                        </button>
+                        {officeCoords && <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#10b981", marginTop: 6 }}>✓ {officeAddress.substring(0, 44)}</div>}
+                      </div>
                     </div>
-                    <div style={{ marginTop: 8 }}>
-                      <div className="settings-label">🔴 End Point</div>
-                      <input className="field" placeholder="Office address or paste Google Maps link"
-                        value={officeAddress} onChange={e => setOfficeAddress(e.target.value)}
-                        style={{ marginBottom: 8 }} />
-                      <button className="btn-primary" onClick={() => saveHomeOffice("office", officeAddress)} disabled={!officeAddress.trim()}>
-                        Save End
+
+                    {/* Shop data */}
+                    <div style={{ background: "#0d1421", border: "1px solid #1f2937", borderRadius: 14, padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151", letterSpacing: 1.5 }}>SHOP DATA</div>
+                      <button className="btn-primary" onClick={() => exportShops(masterShops)}>
+                        ⬇ Export All Shops
                       </button>
-                      {officeCoords && <div className="settings-saved" style={{ marginTop: 6 }}>✓ {officeAddress.substring(0, 44)}</div>}
+                      <label style={{
+                        display: "block", padding: "12px", background: "#111827",
+                        border: "1px solid #1f2937",
+                        borderRadius: 10, color: "#9ca3af",
+                        fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600,
+                        fontSize: 13, cursor: "pointer", textAlign: "center",
+                      }}>
+                        ⬆ Import Shops
+                        <input type="file" accept=".json" style={{ display: "none" }}
+                          onChange={e => {
+                            const file = e.target.files[0];
+                            if (file) importShops(file, setMasterShops, setStatus);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      <button
+                        onClick={() => {
+                          if (!confirm("Clear all shops from all locations? This cannot be undone.")) return;
+                          const empty = EMPTY_MASTER();
+                          setMasterShops(empty);
+                          [1,2,3,4,5,6].forEach(n => saveMasterLocation(n, []).catch(console.error));
+                          setStatus("✓ All shops cleared");
+                        }}
+                        style={{
+                          padding: "12px", background: "transparent",
+                          border: "1px solid #7f1d1d", borderRadius: 10,
+                          color: "#ef4444", fontFamily: "'Space Grotesk',sans-serif",
+                          fontWeight: 600, fontSize: 13, cursor: "pointer",
+                        }}
+                      >
+                        🗑 Clear All Shops
+                      </button>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151", textAlign: "center" }}>
+                        Import replaces existing shops per location
+                      </div>
                     </div>
+
                   </div>
                 )}
               </div>
