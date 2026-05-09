@@ -478,7 +478,7 @@ function VisitNoteModal({ shopName, onSave, onSkip }) {
 // ============================================================
 // SHOP LIST (Add Stop Tab)
 // ============================================================
-function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop, onRemoveFromDay }) {
+function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop, onRemoveFromDay, onEditShop }) {
   if (!shops.length) {
     return (
       <div style={{ padding: "48px 24px", textAlign: "center" }}>
@@ -574,6 +574,17 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
               </div>
             </div>
 
+{/* Edit */}
+            <button
+              onClick={e => { e.stopPropagation(); onEditShop(shop); }}
+              style={{
+                background: "#1f2937", border: "none", color: "#60a5fa",
+                width: 28, height: 28, borderRadius: 7,
+                fontSize: 13, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >✎</button>
             {/* Delete */}
             <button
               onClick={e => { e.stopPropagation(); onDeleteShop(shop.id); }}
@@ -591,7 +602,90 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
     </div>
   );
 }
+// ============================================================
+// EDIT SHOP MODAL
+// ============================================================
+function EditShopModal({ shop, onClose, onSave }) {
+  const [name, setName] = useState(shop.name);
+  const [frequency, setFrequency] = useState(shop.frequency || "weekly");
+  const [openTime, setOpenTime] = useState(shop.openTime || "09:00");
+  const [closeTime, setCloseTime] = useState(shop.closeTime || "20:00");
 
+  const handleSave = () => {
+    if (!name.trim()) return;
+    onSave({ ...shop, name: name.trim(), frequency, openTime, closeTime });
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      background: "rgba(0,0,0,0.8)", display: "flex",
+      alignItems: "flex-end", justifyContent: "center",
+    }} onClick={onClose}>
+      <div style={{
+        background: "#111827", borderRadius: "20px 20px 0 0",
+        border: "1px solid #1f2937", borderBottom: "none",
+        padding: "20px 16px 36px", width: "100%", maxWidth: 480,
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ width: 36, height: 4, background: "#374151", borderRadius: 4, margin: "0 auto 20px" }} />
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: 16, color: "#f97316" }}>
+            Edit Shop
+          </div>
+          <button onClick={onClose} style={{ marginLeft: "auto", background: "none", border: "none", color: "#4b5563", fontSize: 22, cursor: "pointer" }}>×</button>
+        </div>
+
+        <input
+          className="field"
+          placeholder="Shop name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          style={{ marginBottom: 14 }}
+          autoFocus
+        />
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#6b7280", marginBottom: 6, letterSpacing: 1 }}>VISIT FREQUENCY</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {["weekly", "biweekly", "monthly"].map(f => (
+              <button key={f} onClick={() => setFrequency(f)} style={{
+                flex: 1, padding: "8px 4px",
+                background: frequency === f ? "#f97316" : "#1f2937",
+                border: frequency === f ? "none" : "1px solid #374151",
+                borderRadius: 8, color: frequency === f ? "#0c0f14" : "#6b7280",
+                fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
+                fontWeight: frequency === f ? 700 : 400, cursor: "pointer",
+                transition: "all 0.15s",
+              }}>
+                {f === "weekly" ? "Weekly" : f === "biweekly" ? "2 Weeks" : "Monthly"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#6b7280", marginBottom: 6, letterSpacing: 1 }}>OPENING HOURS</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)}
+              className="field" style={{ flex: 1, padding: "8px 10px", fontSize: 13 }} />
+            <span style={{ color: "#4b5563", fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>to</span>
+            <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)}
+              className="field" style={{ flex: 1, padding: "8px 10px", fontSize: 13 }} />
+          </div>
+        </div>
+
+        <button
+          className="btn-primary"
+          onClick={handleSave}
+          disabled={!name.trim()}
+          style={{ width: "100%" }}
+        >
+          Save Changes
+        </button>
+      </div>
+    </div>
+  );
+}
 // ============================================================
 // MAIN APP
 // ============================================================
@@ -613,6 +707,7 @@ export default function App() {
   const [selectedShopIds, setSelectedShopIds] = useState(new Set());
   const [showAddShopModal, setShowAddShopModal] = useState(false);
   const [modalGeocoding, setModalGeocoding] = useState(false);
+  const [editingShop, setEditingShop] = useState(null);
 
   // Visit note modal state
   const [pendingVisitNote, setPendingVisitNote] = useState(null); // { id, name }
@@ -1366,6 +1461,21 @@ export default function App() {
         />
       )}
 
+      {/* EDIT SHOP MODAL */}
+      {editingShop && (
+        <EditShopModal
+          shop={editingShop}
+          onClose={() => setEditingShop(null)}
+          onSave={(updated) => {
+            updateMasterShops(currentLocationNum, shops =>
+              shops.map(s => s.id === updated.id ? updated : s)
+            );
+            setEditingShop(null);
+            setStatus(`✓ "${updated.name}" updated`);
+          }}
+        />
+      )}
+
       {/* ADD SHOP MODAL */}
       {mainTab === "route" && showAddShopModal && (
         <AddShopModal
@@ -1559,6 +1669,7 @@ export default function App() {
                       onToggle={toggleShopSelection}
                       onDeleteShop={handleDeleteShopFromMaster}
                       onRemoveFromDay={removeLocation}
+                      onEditShop={(shop) => setEditingShop(shop)}
                     />
 
                     {/* One-off add */}
