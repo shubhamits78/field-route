@@ -659,10 +659,35 @@ export default function App() {
   const selectedNotAdded = [...selectedShopIds].filter(id => !currentDayLocIds.has(id)).length;
 
   useEffect(() => {
-    localStorage.setItem("frp_active_day", activeDay);
-    localStorage.setItem("frp_active_week", activeWeek);
-    setSelectedShopIds(new Set());
-  }, [activeDay, activeWeek]);
+  localStorage.setItem("frp_active_day", activeDay);
+  localStorage.setItem("frp_active_week", activeWeek);
+  setSelectedShopIds(new Set());
+}, [activeDay, activeWeek]);
+
+useEffect(() => {
+  if (!dbReady) return;
+  const locNum = getDayLocation(activeDay);
+  const shops = masterShops[locNum] || [];
+  setDayData(prev => {
+    const day = prev[activeDay];
+    const existingIds = new Set(day.locations.map(l => l.id));
+    const toAdd = shops
+      .filter(s => !existingIds.has(s.id) && (!s.lastVisited || isOverdue(s)))
+      .map(s => ({ ...s, visited: false, optimizedIndex: undefined }));
+    if (!toAdd.length) return prev;
+    const updated = {
+      ...prev,
+      [activeDay]: {
+        ...day,
+        locations: [...day.locations, ...toAdd],
+        optimizedOrder: null,
+        routeGeometry: null,
+      }
+    };
+    saveDay({ ...updated[activeDay], updatedAt: new Date().toISOString(), lastUsedDate: getTodayDate() }).catch(console.error);
+    return updated;
+  });
+}, [activeDay, dbReady, masterShops]);
 
   const updateCurrentDay = useCallback((updater) => {
     setDayData(prev => {
@@ -1515,17 +1540,6 @@ export default function App() {
                         + Shop
                       </button>
                     </div>
-
-                    {/* Overdue banner */}
-                    {overdueCount > 0 && (
-                      <div className="plan-banner" onClick={planMyDay}>
-                        <div>
-                          <div className="plan-banner-text">⚡ Plan My Day</div>
-                          <div className="plan-banner-sub">{overdueCount} overdue shop{overdueCount > 1 ? "s" : ""} need a visit</div>
-                        </div>
-                        <div style={{ color: "#f97316", fontSize: 18 }}>→</div>
-                      </div>
-                    )}
 
                     {/* Shop list */}
                     <ShopList
