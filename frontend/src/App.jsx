@@ -97,9 +97,17 @@ async function importShops(file, updateMasterShops, setStatus) {
     const shops = data.masterShops;
     if (!shops || typeof shops !== "object") throw new Error("Invalid file format");
     for (const [locNum, locShops] of Object.entries(shops)) {
-      await saveMasterLocation(Number(locNum), locShops);
-      updateMasterShops(Number(locNum), () => locShops);
-    }
+  const patched = locShops.map(s => ({
+    frequency: "weekly",
+    openTime: "09:00",
+    closeTime: "20:00",
+    lastVisited: null,
+    visitNote: "",
+    ...s,
+  }));
+  await saveMasterLocation(Number(locNum), patched);
+  updateMasterShops(Number(locNum), () => patched);
+}
     setStatus("✓ Shops imported successfully");
   } catch (e) {
     setStatus(`✗ Import failed: ${e.message}`);
@@ -691,32 +699,6 @@ export default function App() {
   localStorage.setItem("frp_active_week", activeWeek);
   setSelectedShopIds(new Set());
 }, [activeDay, activeWeek]);
-
-useEffect(() => {
-  if (!dbReady) return;
-  const locNum = getDayLocation(activeDay);
-  const shops = masterShops[locNum] || [];
-  setDayData(prev => {
-    const day = prev[activeDay];
-    const existingIds = new Set(day.locations.map(l => l.id));
-    const toAdd = shops
-      .filter(s => !existingIds.has(s.id) && (!s.lastVisited || isOverdue(s)))
-      .map(s => ({ ...s, visited: false, optimizedIndex: undefined }));
-    if (!toAdd.length) return prev;
-    const updated = {
-      ...prev,
-      [activeDay]: {
-        ...day,
-        locations: [...day.locations, ...toAdd],
-        optimizedOrder: null,
-        routeGeometry: null,
-      }
-    };
-    saveDay({ ...updated[activeDay], updatedAt: new Date().toISOString(), lastUsedDate: getTodayDate() }).catch(console.error);
-    return updated;
-  });
-}, [activeDay, dbReady, masterShops]);
-
   const updateCurrentDay = useCallback((updater) => {
     setDayData(prev => {
       const updated = { ...prev, [activeDay]: updater(prev[activeDay]) };
