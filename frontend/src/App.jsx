@@ -1690,31 +1690,14 @@ export default function App() {
                 {activeTab === "settings" && (
                   <div style={{ padding: "16px 14px", display: "flex", flexDirection: "column", gap: 20 }}>
 
-                    {/* Route points */}
-                    <div style={{ background: "#0d1421", border: "1px solid #1f2937", borderRadius: 14, padding: "14px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
-                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151", letterSpacing: 1.5 }}>ROUTE POINTS</div>
-                      <div>
-                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#10b981", marginBottom: 6 }}>● START</div>
-                        <input className="field" placeholder="Home address or Google Maps link"
-                          value={homeAddress} onChange={e => setHomeAddress(e.target.value)}
-                          style={{ marginBottom: 8 }} />
-                        <button className="btn-primary" onClick={() => saveHomeOffice("home", homeAddress)} disabled={!homeAddress.trim()}>
-                          Save Start
-                        </button>
-                        {homeCoords && <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#10b981", marginTop: 6 }}>✓ {homeAddress.substring(0, 44)}</div>}
-                      </div>
-                      <div style={{ height: 1, background: "#1f2937" }} />
-                      <div>
-                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#ef4444", marginBottom: 6 }}>● END</div>
-                        <input className="field" placeholder="Office address or Google Maps link"
-                          value={officeAddress} onChange={e => setOfficeAddress(e.target.value)}
-                          style={{ marginBottom: 8 }} />
-                        <button className="btn-primary" onClick={() => saveHomeOffice("office", officeAddress)} disabled={!officeAddress.trim()}>
-                          Save End
-                        </button>
-                        {officeCoords && <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#10b981", marginTop: 6 }}>✓ {officeAddress.substring(0, 44)}</div>}
-                      </div>
-                    </div>
+{/* Route points */}
+                    <RoutePointsEditor
+                      homeAddress={homeAddress} setHomeAddress={setHomeAddress}
+                      homeCoords={homeCoords}
+                      officeAddress={officeAddress} setOfficeAddress={setOfficeAddress}
+                      officeCoords={officeCoords}
+                      onSave={saveHomeOffice}
+                    />
 
                     {/* Shop data */}
                     <div style={{ background: "#0d1421", border: "1px solid #1f2937", borderRadius: 14, padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1740,11 +1723,14 @@ export default function App() {
                       </label>
                       <button
                         onClick={() => {
-                          if (!confirm("Clear all shops from all locations? This cannot be undone.")) return;
+                          if (!confirm("Clear all shops and stops? This cannot be undone.")) return;
                           const empty = EMPTY_MASTER();
                           setMasterShops(empty);
                           [1,2,3,4,5,6].forEach(n => saveMasterLocation(n, []).catch(console.error));
-                          setStatus("✓ All shops cleared");
+                          const clearedDays = Object.fromEntries(DAYS.map(d => [d, EMPTY_DAY(d)]));
+                          setDayData(clearedDays);
+                          DAYS.forEach(d => saveDay(EMPTY_DAY(d)).catch(console.error));
+                          setStatus("✓ All shops and stops cleared");
                         }}
                         style={{
                           padding: "12px", background: "transparent",
@@ -2098,7 +2084,103 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
     </div>
   );
 }
+// ============================================================
+// ROUTE POINTS EDITOR
+// ============================================================
+function RoutePointsEditor({ homeAddress, setHomeAddress, homeCoords, officeAddress, setOfficeAddress, officeCoords, onSave }) {
+  const [editingHome, setEditingHome] = useState(false);
+  const [editingOffice, setEditingOffice] = useState(false);
 
+  return (
+    <div style={{ background: "#0d1421", border: "1px solid #1f2937", borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151", letterSpacing: 1.5, padding: "12px 14px 8px" }}>
+        ROUTE POINTS
+      </div>
+
+      {/* START */}
+      <div style={{ padding: "0 14px 12px" }}>
+        {!editingHome ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}
+            onClick={() => setEditingHome(true)}>
+            <div style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: homeCoords ? "#10b981" : "#374151", flexShrink: 0,
+            }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1 }}>START</div>
+              <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 13, color: homeCoords ? "#f3f4f6" : "#374151", marginTop: 2 }}>
+                {homeCoords ? homeAddress.substring(0, 40) : "Tap to set start point"}
+              </div>
+            </div>
+            <div style={{ color: "#374151", fontSize: 12 }}>✎</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 4 }}>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#10b981", letterSpacing: 1 }}>● START</div>
+            <input className="field" placeholder="Home address or Google Maps link"
+              value={homeAddress} onChange={e => setHomeAddress(e.target.value)}
+              autoFocus />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn-primary" style={{ flex: 1 }}
+                onClick={() => { onSave("home", homeAddress); setEditingHome(false); }}
+                disabled={!homeAddress.trim()}>
+                Save
+              </button>
+              <button onClick={() => setEditingHome(false)} style={{
+                padding: "10px 14px", background: "transparent",
+                border: "1px solid #1f2937", borderRadius: 10,
+                color: "#6b7280", fontFamily: "'Space Grotesk',sans-serif",
+                fontSize: 13, cursor: "pointer",
+              }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ height: 1, background: "#1f2937" }} />
+
+      {/* END */}
+      <div style={{ padding: "12px 14px 14px" }}>
+        {!editingOffice ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}
+            onClick={() => setEditingOffice(true)}>
+            <div style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: officeCoords ? "#ef4444" : "#374151", flexShrink: 0,
+            }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1 }}>END</div>
+              <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 13, color: officeCoords ? "#f3f4f6" : "#374151", marginTop: 2 }}>
+                {officeCoords ? officeAddress.substring(0, 40) : "Tap to set end point"}
+              </div>
+            </div>
+            <div style={{ color: "#374151", fontSize: 12 }}>✎</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 4 }}>
+            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#ef4444", letterSpacing: 1 }}>● END</div>
+            <input className="field" placeholder="Office address or Google Maps link"
+              value={officeAddress} onChange={e => setOfficeAddress(e.target.value)}
+              autoFocus />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn-primary" style={{ flex: 1 }}
+                onClick={() => { onSave("office", officeAddress); setEditingOffice(false); }}
+                disabled={!officeAddress.trim()}>
+                Save
+              </button>
+              <button onClick={() => setEditingOffice(false)} style={{
+                padding: "10px 14px", background: "transparent",
+                border: "1px solid #1f2937", borderRadius: 10,
+                color: "#6b7280", fontFamily: "'Space Grotesk',sans-serif",
+                fontSize: 13, cursor: "pointer",
+              }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 // ============================================================
 // ONE-OFF ADD
 // ============================================================
