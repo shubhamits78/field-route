@@ -76,7 +76,35 @@ async function loadAllMasterLocations() {
     req.onerror = () => rej(req.error);
   });
 }
+// ============================================================
+// EXPORT / IMPORT
+// ============================================================
+function exportShops(masterShops) {
+  const data = { version: 1, exportedAt: new Date().toISOString(), masterShops };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `fieldroute-shops-${new Date().toISOString().split("T")[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
+async function importShops(file, updateMasterShops, setStatus) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const shops = data.masterShops;
+    if (!shops || typeof shops !== "object") throw new Error("Invalid file format");
+    for (const [locNum, locShops] of Object.entries(shops)) {
+      await saveMasterLocation(Number(locNum), locShops);
+      updateMasterShops(Number(locNum), () => locShops);
+    }
+    setStatus("✓ Shops imported successfully");
+  } catch (e) {
+    setStatus(`✗ Import failed: ${e.message}`);
+  }
+}
 // ============================================================
 // HELPERS
 // ============================================================
@@ -1565,7 +1593,27 @@ useEffect(() => {
 
                 {/* ── SETTINGS TAB ── */}
                 {activeTab === "settings" && (
-                  <div className="settings-section">
+  <div className="settings-section">
+    <div style={{ fontSize: 11, color: "#4b5563", fontFamily: "'DM Mono',monospace", marginBottom: 4 }}>📤 EXPORT / IMPORT SHOPS</div>
+    <button className="btn-add" onClick={() => exportShops(masterShops)}>⬇ Export All Shops</button>
+    <label style={{
+      display: "block", padding: 11, background: "#1e2633", color: "#e8e3db",
+      borderRadius: 8, fontFamily: "'Syne',sans-serif", fontWeight: 800,
+      fontSize: 13, cursor: "pointer", textAlign: "center",
+    }}>
+      ⬆ Import Shops
+      <input type="file" accept=".json" style={{ display: "none" }}
+        onChange={e => {
+          const file = e.target.files[0];
+          if (file) importShops(file, updateMasterShops, setStatus);
+          e.target.value = "";
+        }}
+      />
+    </label>
+    <div style={{ fontSize: 10, color: "#374151", fontFamily: "'DM Mono',monospace" }}>
+      Import will replace existing shops per location.
+    </div>
+    <div style={{ height: 1, background: "#1e2633", margin: "8px 0" }} />
                     <div>
                       <div className="settings-label">🟢 Start Point</div>
                       <input className="field" placeholder="Home address or paste Google Maps link"
