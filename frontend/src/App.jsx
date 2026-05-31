@@ -1882,7 +1882,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
 
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 24px" }}>
 
-            {/* Contact details */}
+         {/* Contact + Order — single save */}
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>CONTACT</div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -1912,49 +1912,39 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                   value={drawerPhone}
                   type="tel"
                   onChange={e => setDrawerPhone(e.target.value)}
-                  style={{ marginBottom: 8, padding: "8px 11px", fontSize: 12 }}
+                  style={{ marginBottom: 12, padding: "8px 11px", fontSize: 12 }}
                 />
-                <button
-                  onClick={() => { saveContact(activeShop.id); setStatus("✓ Contact saved"); }}
-                  style={{
-                    padding: "9px", background: "#111827",
-                    border: "1px solid #1f2937", borderRadius: 10,
-                    color: "#9ca3af", fontFamily: "'Space Grotesk',sans-serif",
-                    fontWeight: 600, fontSize: 12, cursor: "pointer", width: "100%",
-                  }}
-                >
-                  Save Contact
-                </button>
-              </div>
-              {/* Log order */}
-              <div style={{ marginBottom: 16 }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>LOG ORDER</div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                  <input
-                    className="field"
-                    type="number"
-                    placeholder="₹ Amount"
-                    value={drawerAmount}
-                    onChange={e => setDrawerAmount(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && addEntry()}
-                    style={{ flex: 1, padding: "10px 12px", fontSize: 14 }}
-                    autoFocus
-                  />
-                  <button onClick={addEntry} disabled={!drawerAmount} style={{
-                    background: drawerAmount ? "#f97316" : "#1f2937",
-                    border: "none", color: drawerAmount ? "#080d14" : "#374151",
-                    borderRadius: 10, padding: "10px 16px", cursor: "pointer",
-                    fontFamily: "'Space Grotesk',sans-serif", fontSize: 13, fontWeight: 700,
-                    transition: "all 0.15s", flexShrink: 0,
-                  }}>Add</button>
-                </div>
                 <input
                   className="field"
-                  placeholder="Note (optional) — e.g. paid cash, follow up"
+                  type="number"
+                  placeholder="₹ Amount (optional)"
+                  value={drawerAmount}
+                  onChange={e => setDrawerAmount(e.target.value)}
+                  style={{ marginBottom: 8, padding: "10px 12px", fontSize: 14 }}
+                />
+                <input
+                  className="field"
+                  placeholder="Note (optional)"
                   value={drawerNote}
                   onChange={e => setDrawerNote(e.target.value)}
-                  style={{ padding: "8px 11px", fontSize: 12 }}
+                  style={{ marginBottom: 12, padding: "8px 11px", fontSize: 12 }}
                 />
+                <button
+                  onClick={() => {
+                    saveContact(activeShop.id);
+                    if (drawerAmount && !isNaN(drawerAmount)) addEntry();
+                    setStatus("✓ Saved");
+                  }}
+                  style={{
+                    padding: "12px", background: "#f97316",
+                    border: "none", borderRadius: 10,
+                    color: "#080d14", fontFamily: "'Space Grotesk',sans-serif",
+                    fontWeight: 700, fontSize: 13, cursor: "pointer", width: "100%",
+                  }}
+                >
+                  Save
+                </button>
               </div>
 
               {/* Order history */}
