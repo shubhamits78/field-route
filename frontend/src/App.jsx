@@ -426,57 +426,6 @@ function AddShopModal({ locationNum, onClose, onAdd, geocoding }) {
     </div>
   );
 }
-
-// ============================================================
-// VISIT NOTE MODAL — appears after marking a shop visited
-// ============================================================
-function VisitNoteModal({ shopName, onSave, onSkip }) {
-  const [note, setNote] = useState("");
-  return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 9998,
-      background: "rgba(0,0,0,0.75)", display: "flex",
-      alignItems: "flex-end", justifyContent: "center",
-    }}>
-      <div style={{
-        background: "#111827", borderRadius: "20px 20px 0 0",
-        border: "1px solid #1f2937", borderBottom: "none",
-        padding: "20px 16px 36px", width: "100%", maxWidth: 480,
-      }}>
-        <div style={{ width: 36, height: 4, background: "#374151", borderRadius: 4, margin: "0 auto 20px" }} />
-        <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: 15, color: "#e8e3db", marginBottom: 4 }}>
-          ✓ {shopName}
-        </div>
-        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#6b7280", marginBottom: 14 }}>
-          ADD A QUICK NOTE (OPTIONAL)
-        </div>
-        <textarea
-          className="field"
-          placeholder="Order placed, follow up needed, closed today..."
-          value={note}
-          onChange={e => setNote(e.target.value)}
-          autoFocus
-          style={{ height: 80, marginBottom: 12, resize: "none" }}
-        />
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={onSkip} style={{
-            flex: 1, padding: "11px", background: "#1f2937",
-            border: "none", borderRadius: 10, color: "#6b7280",
-            fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
-            fontSize: 13, cursor: "pointer",
-          }}>Skip</button>
-          <button onClick={() => onSave(note.trim())} style={{
-            flex: 2, padding: "11px", background: "#f97316",
-            border: "none", borderRadius: 10, color: "#0c0f14",
-            fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
-            fontSize: 13, cursor: "pointer",
-          }}>Save Note</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ============================================================
 // SHOP LIST (Add Stop Tab)
 // ============================================================
@@ -711,9 +660,6 @@ export default function App() {
   const [modalGeocoding, setModalGeocoding] = useState(false);
   const [editingShop, setEditingShop] = useState(null);
 
-  // Visit note modal state
-  const [pendingVisitNote, setPendingVisitNote] = useState(null); // { id, name }
-
   // One-off add
   const [addressInput, setAddressInput] = useState("");
   const [nameInput, setNameInput] = useState("");
@@ -893,51 +839,22 @@ export default function App() {
     setActiveTab("list");
   };
 
-  // Toggle visited — triggers note modal for master shops
-  const toggleVisited = (id) => {
+const toggleVisited = (id) => {
+    const today = getTodayDate();
     const loc = currentDay.locations.find(l => l.id === id);
-    if (!loc) return;
-    if (!loc.visited) {
-      // Mark visited first, then show note modal
-      updateCurrentDay(d => ({
-        ...d,
-        locations: d.locations.map(l => l.id === id ? { ...l, visited: true } : l),
-      }));
-      // Check if it's a master shop
+    updateCurrentDay(d => ({
+      ...d,
+      locations: d.locations.map(l => l.id === id ? { ...l, visited: !l.visited } : l),
+    }));
+    if (loc && !loc.visited) {
       const isMaster = currentMasterShops.some(s => s.id === id);
       if (isMaster) {
-        setPendingVisitNote({ id, name: loc.name });
+        updateMasterShops(currentLocationNum, shops =>
+          shops.map(s => s.id === id ? { ...s, lastVisited: today } : s)
+        );
       }
-    } else {
-      updateCurrentDay(d => ({
-        ...d,
-        locations: d.locations.map(l => l.id === id ? { ...l, visited: false } : l),
-      }));
     }
   };
-
-  // Save visit note and update master shop lastVisited
-  const saveVisitNote = (note) => {
-    if (!pendingVisitNote) return;
-    const today = getTodayDate();
-    updateMasterShops(currentLocationNum, shops =>
-      shops.map(s => s.id === pendingVisitNote.id
-        ? { ...s, lastVisited: today, visitNote: note }
-        : s)
-    );
-    setPendingVisitNote(null);
-    setStatus("✓ Visit logged");
-  };
-
-  const skipVisitNote = () => {
-    if (!pendingVisitNote) return;
-    const today = getTodayDate();
-    updateMasterShops(currentLocationNum, shops =>
-      shops.map(s => s.id === pendingVisitNote.id ? { ...s, lastVisited: today } : s)
-    );
-    setPendingVisitNote(null);
-  };
-
   const removeLocation = (id) => {
     updateCurrentDay(d => ({ ...d, locations: d.locations.filter(l => l.id !== id), optimizedOrder: null, routeGeometry: null, totalTime: 0, totalDist: 0 }));
   };
@@ -1454,15 +1371,7 @@ export default function App() {
         .leaflet-control-zoom { margin-bottom: 16px !important; margin-right: 16px !important; }
       `}</style>
 
-      {/* VISIT NOTE MODAL */}
-      {pendingVisitNote && (
-        <VisitNoteModal
-          shopName={pendingVisitNote.name}
-          onSave={saveVisitNote}
-          onSkip={skipVisitNote}
-        />
-      )}
-
+    
       {/* EDIT SHOP MODAL */}
       {editingShop && (
         <EditShopModal
