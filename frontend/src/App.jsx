@@ -1931,10 +1931,11 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                   style={{ marginBottom: 12, padding: "8px 11px", fontSize: 12 }}
                 />
                 <button
-                  onClick={() => {
+                 onClick={() => {
                     saveContact(activeShop.id);
                     if (drawerAmount && !isNaN(drawerAmount)) addEntry();
                     setStatus("✓ Saved");
+                    closeDrawer();
                   }}
                   style={{
                     padding: "12px", background: "#f97316",
