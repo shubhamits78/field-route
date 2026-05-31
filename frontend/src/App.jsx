@@ -1894,7 +1894,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                     style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
                   />
                   
-                    href={drawerPhone ? ("tel:" + drawerPhone) : undefined}
+                href={drawerPhone ? ("tel:" + drawerPhone) : undefined}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
                       width: 40, borderRadius: 10, flexShrink: 0,
@@ -1903,9 +1903,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                       fontSize: 18, textDecoration: "none",
                       border: "1px solid " + (drawerPhone ? "#14532d" : "#1f2937"),
                     }}
-                  >
-                  📞
-                </a>
+                  >📞</a>
                 </div>
                 <input
                   className="field"
