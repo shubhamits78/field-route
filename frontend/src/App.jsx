@@ -1907,16 +1907,25 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                   >
                     📞
                   </a>
-                </div>
-                <input
+              <input
                   className="field"
                   placeholder="Phone number"
                   value={drawerPhone}
                   type="tel"
                   onChange={e => setDrawerPhone(e.target.value)}
-                  onBlur={() => saveContact(activeShop.id)}
                   style={{ marginTop: 8, padding: "8px 11px", fontSize: 12 }}
                 />
+                <button
+                  onClick={() => { saveContact(activeShop.id); setStatus("✓ Contact saved"); }}
+                  style={{
+                    marginTop: 8, padding: "9px", background: "#111827",
+                    border: "1px solid #1f2937", borderRadius: 10,
+                    color: "#9ca3af", fontFamily: "'Space Grotesk',sans-serif",
+                    fontWeight: 600, fontSize: 12, cursor: "pointer", width: "100%",
+                  }}
+                >
+                  Save Contact
+                </button>
               </div>
 
               {/* Log order */}
