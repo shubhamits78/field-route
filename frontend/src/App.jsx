@@ -1882,7 +1882,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
 
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 24px" }}>
 
-             {/* Contact details */}
+            {/* Contact details */}
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>CONTACT</div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -1893,19 +1893,18 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                     onChange={e => setDrawerOwner(e.target.value)}
                     style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
                   />
-                  
-                href={drawerPhone ? ("tel:" + drawerPhone) : undefined}
+                  <button
+                    onClick={() => { if (drawerPhone) window.location.href = "tel:" + drawerPhone; }}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
                       width: 40, borderRadius: 10, flexShrink: 0,
                       background: drawerPhone ? "#0a2218" : "#1f2937",
                       color: drawerPhone ? "#10b981" : "#374151",
-                      fontSize: 18, textDecoration: "none",
-                      border: "1px solid " + (drawerPhone ? "#14532d" : "#1f2937"),
+                      fontSize: 18, border: "none", cursor: "pointer",
                     }}
                   >
-                  📞
-                </a>
+                    📞
+                  </button>
                 </div>
                 <input
                   className="field"
