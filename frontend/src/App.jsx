@@ -1882,10 +1882,10 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
 
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 24px" }}>
 
-              {/* Contact details */}
+             {/* Contact details */}
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>CONTACT</div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <input
                     className="field"
                     placeholder="Owner name"
@@ -1894,18 +1894,16 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                     style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
                   />
                   
-                    href={drawerPhone ? `tel:${drawerPhone}` : undefined}
+                    href={drawerPhone ? ("tel:" + drawerPhone) : undefined}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
                       width: 40, borderRadius: 10, flexShrink: 0,
                       background: drawerPhone ? "#0a2218" : "#1f2937",
                       color: drawerPhone ? "#10b981" : "#374151",
                       fontSize: 18, textDecoration: "none",
-                      border: `1px solid ${drawerPhone ? "#14532d" : "#1f2937"}`,
+                      border: "1px solid " + (drawerPhone ? "#14532d" : "#1f2937"),
                     }}
-                  >
-                    📞
-                  </a>
+                  >📞</a>
                 </div>
                 <input
                   className="field"
@@ -1913,12 +1911,12 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                   value={drawerPhone}
                   type="tel"
                   onChange={e => setDrawerPhone(e.target.value)}
-                  style={{ marginTop: 8, padding: "8px 11px", fontSize: 12 }}
+                  style={{ marginBottom: 8, padding: "8px 11px", fontSize: 12 }}
                 />
                 <button
                   onClick={() => { saveContact(activeShop.id); setStatus("✓ Contact saved"); }}
                   style={{
-                    marginTop: 8, padding: "9px", background: "#111827",
+                    padding: "9px", background: "#111827",
                     border: "1px solid #1f2937", borderRadius: 10,
                     color: "#9ca3af", fontFamily: "'Space Grotesk',sans-serif",
                     fontWeight: 600, fontSize: 12, cursor: "pointer", width: "100%",
