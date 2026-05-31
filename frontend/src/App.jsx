@@ -1891,10 +1891,9 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                     placeholder="Owner name"
                     value={drawerOwner}
                     onChange={e => setDrawerOwner(e.target.value)}
-                    onBlur={() => saveContact(activeShop.id)}
                     style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
                   />
-                  <a
+                  
                     href={drawerPhone ? `tel:${drawerPhone}` : undefined}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
@@ -1907,7 +1906,8 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                   >
                     📞
                   </a>
-              <input
+                </div>
+                <input
                   className="field"
                   placeholder="Phone number"
                   value={drawerPhone}
@@ -1927,7 +1927,6 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                   Save Contact
                 </button>
               </div>
-
               {/* Log order */}
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>LOG ORDER</div>
