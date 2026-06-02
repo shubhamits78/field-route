@@ -450,7 +450,7 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
     const aOver = isOverdue(a), bOver = isOverdue(b);
     if (aOver && !bOver) return -1;
     if (!aOver && bOver) return 1;
-    return 0;
+    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   });
 
   return (
@@ -1697,7 +1697,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
     if (currentLocationNum) setActiveLocTab(currentLocationNum);
   }, [currentLocationNum]);
 
-  const shops = masterShops[activeLocTab] || [];
+  const shops = [...(masterShops[activeLocTab] || [])].sort((a, b) => a.name.localeCompare(b.name));
 
   const getHistory = (shopId) => orders[shopId] || [];
   const getTotal = (shopId) => getHistory(shopId).reduce((sum, e) => sum + Number(e.amount), 0);
