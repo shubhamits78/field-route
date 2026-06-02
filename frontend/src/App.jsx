@@ -1934,7 +1934,6 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                  onClick={() => {
                     saveContact(activeShop.id);
                     if (drawerAmount && !isNaN(drawerAmount)) addEntry();
-                    setStatus("✓ Saved");
                     closeDrawer();
                   }}
                   style={{
