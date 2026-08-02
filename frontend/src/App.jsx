@@ -210,6 +210,8 @@ async function getRouteGeometry(locations) {
 function solveTSP(matrix) {
   const n = matrix.length;
   if (n <= 1) return { order: [0], totalTime: 0 };
+
+  // Step 1: Build greedy nearest-neighbor from every starting point
   let bestOrder = null, bestTime = Infinity;
   for (let start = 0; start < n; start++) {
     const visited = new Array(n).fill(false);
@@ -229,22 +231,60 @@ function solveTSP(matrix) {
     }
     if (totalTime < bestTime) { bestTime = totalTime; bestOrder = [...order]; }
   }
+
+  // Step 2: Full 2-opt — run until no improvement found
+  const calcTotal = (ord) => {
+    let t = 0;
+    for (let i = 0; i < ord.length - 1; i++) t += matrix[ord[i]][ord[i + 1]];
+    return t;
+  };
+
   let improved = true;
   while (improved) {
     improved = false;
-    for (let i = 1; i < n - 2; i++) {
-      for (let j = i + 1; j < n - 1; j++) {
-        const [a, b, c, d] = [bestOrder[i - 1], bestOrder[i], bestOrder[j], bestOrder[j + 1]];
-        if (matrix[a][c] + matrix[b][d] < matrix[a][b] + matrix[c][d]) {
-          bestOrder.splice(i, j - i + 1, ...bestOrder.slice(i, j + 1).reverse());
+    for (let i = 0; i < n - 1; i++) {
+      for (let j = i + 2; j < n; j++) {
+        if (i === 0 && j === n - 1) continue; // skip full reversal
+        const newOrder = [
+          ...bestOrder.slice(0, i + 1),
+          ...bestOrder.slice(i + 1, j + 1).reverse(),
+          ...bestOrder.slice(j + 1),
+        ];
+        const newTime = calcTotal(newOrder);
+        if (newTime < bestTime - 0.01) {
+          bestOrder = newOrder;
+          bestTime = newTime;
           improved = true;
         }
       }
     }
   }
-  let total = 0;
-  for (let i = 0; i < bestOrder.length - 1; i++) total += matrix[bestOrder[i]][bestOrder[i + 1]];
-  return { order: bestOrder, totalTime: total };
+
+  // Step 3: Or-opt — try moving single stops to a better position
+  let orImproved = true;
+  while (orImproved) {
+    orImproved = false;
+    for (let i = 1; i < n - 1; i++) {
+      for (let j = 1; j < n; j++) {
+        if (j === i || j === i + 1) continue;
+        const node = bestOrder[i];
+        const newOrder = [...bestOrder];
+        newOrder.splice(i, 1);
+        const insertAt = j > i ? j - 1 : j;
+        newOrder.splice(insertAt, 0, node);
+        const newTime = calcTotal(newOrder);
+        if (newTime < bestTime - 0.01) {
+          bestOrder = newOrder;
+          bestTime = newTime;
+          orImproved = true;
+          break;
+        }
+      }
+      if (orImproved) break;
+    }
+  }
+
+  return { order: bestOrder, totalTime: bestTime };
 }
 
 // ============================================================
