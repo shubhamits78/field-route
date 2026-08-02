@@ -1019,15 +1019,86 @@ const toggleVisited = (id) => {
       const matrix = await getDistanceMatrix(locs);
       setStatus("Solving route...");
       let order, totalTime;
+    // Build full matrix indices: 0=start, 1..n=middle, n+1=end
+      const calcTotal = (ord) => {
+        let t = 0;
+        for (let i = 0; i < ord.length - 1; i++) t += matrix[ord[i]][ord[i + 1]];
+        return t;
+      };
+
+      const twoOpt = (ord, fixFirst, fixLast) => {
+        // fixFirst: index 0 is locked (start), fixLast: last index is locked (end)
+        const n = ord.length;
+        let best = [...ord];
+        let bestCost = calcTotal(best);
+        let improved = true;
+        while (improved) {
+          improved = false;
+          const iStart = fixFirst ? 1 : 0;
+          const jEnd = fixLast ? n - 1 : n;
+          for (let i = iStart; i < jEnd - 1; i++) {
+            for (let j = i + 2; j < jEnd; j++) {
+              const next = [
+                ...best.slice(0, i + 1),
+                ...best.slice(i + 1, j + 1).reverse(),
+                ...best.slice(j + 1),
+              ];
+              const cost = calcTotal(next);
+              if (cost < bestCost - 0.01) {
+                best = next;
+                bestCost = cost;
+                improved = true;
+              }
+            }
+          }
+        }
+        return { order: best, totalTime: bestCost };
+      };
+
+      const orOpt = (ord, fixFirst, fixLast) => {
+        const n = ord.length;
+        let best = [...ord];
+        let bestCost = calcTotal(best);
+        for (let segLen = 1; segLen <= 3; segLen++) {
+          let improved = true;
+          while (improved) {
+            improved = false;
+            const iStart = fixFirst ? 1 : 0;
+            const iEnd = fixLast ? n - segLen - 1 : n - segLen;
+            for (let i = iStart; i < iEnd; i++) {
+              const seg = best.slice(i, i + segLen);
+              const without = [...best.slice(0, i), ...best.slice(i + segLen)];
+              const jStart = fixFirst ? 1 : 0;
+              const jEnd = fixLast ? without.length - 1 : without.length;
+              for (let j = jStart; j <= jEnd; j++) {
+                if (j >= i - 1 && j <= i + 1) continue;
+                const candidate = [...without.slice(0, j), ...seg, ...without.slice(j)];
+                if (candidate.length !== n) continue;
+                const cost = calcTotal(candidate);
+                if (cost < bestCost - 0.01) {
+                  best = candidate;
+                  bestCost = cost;
+                  improved = true;
+                }
+              }
+            }
+          }
+        }
+        return { order: best, totalTime: bestCost };
+      };
+
       if (startLoc && endLoc && middleLocs.length >= 1) {
         const n = middleLocs.length;
         const officeIdx = n + 1;
         const np = priorityLocs.length;
-        const subMatrix = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => matrix[i + 1][j + 1]));
+        const subMatrix = Array.from({ length: n }, (_, i) =>
+          Array.from({ length: n }, (_, j) => matrix[i + 1][j + 1])
+        );
+
+        // Greedy nearest-neighbor from all starting points
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
         let bestCost = Infinity;
-        const startCandidates = np > 0 ? Array.from({ length: np }, (_, i) => i) : Array.from({ length: n }, (_, i) => i);
-        for (let s of startCandidates) {
+        for (let s = 0; s < n; s++) {
           const vis = new Array(n).fill(false);
           const ord = [s]; vis[s] = true; let cur = s, t = 0;
           for (let i = 1; i < n; i++) {
@@ -1046,13 +1117,19 @@ const toggleVisited = (id) => {
             if (near === -1) break;
             vis[near] = true; ord.push(near); t += nearD; cur = near;
           }
-          const homeCost = matrix[0][ord[0] + 1];
-          const officeCost = matrix[ord[ord.length - 1] + 1][officeIdx];
-          const totalCost = homeCost + t + officeCost;
+          const fullOrd = [0, ...ord.map(i => i + 1), officeIdx];
+          const totalCost = calcTotal(fullOrd);
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
-        order = [0, ...bestMiddle.map(i => i + 1), officeIdx];
-        totalTime = bestCost;
+
+        // Now run 2-opt + or-opt on the full order including start/end
+        let fullOrder = [0, ...bestMiddle.map(i => i + 1), officeIdx];
+        ({ order: fullOrder } = twoOpt(fullOrder, true, true));
+        ({ order: fullOrder } = orOpt(fullOrder, true, true));
+        ({ order: fullOrder } = twoOpt(fullOrder, true, true)); // second pass
+        order = fullOrder;
+        totalTime = calcTotal(order);
+
       } else if (startLoc && !endLoc && middleLocs.length >= 1) {
         const n = middleLocs.length;
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
@@ -1068,11 +1145,18 @@ const toggleVisited = (id) => {
             if (near === -1) break;
             vis[near] = true; ord.push(near); t += nearD; cur = near;
           }
-          const totalCost = matrix[0][ord[0] + 1] + t;
+          const fullOrd = [0, ...ord.map(i => i + 1)];
+          const totalCost = calcTotal(fullOrd);
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
-        order = [0, ...bestMiddle.map(i => i + 1)];
-        totalTime = bestCost;
+
+        let fullOrder = [0, ...bestMiddle.map(i => i + 1)];
+        ({ order: fullOrder } = twoOpt(fullOrder, true, false));
+        ({ order: fullOrder } = orOpt(fullOrder, true, false));
+        ({ order: fullOrder } = twoOpt(fullOrder, true, false));
+        order = fullOrder;
+        totalTime = calcTotal(order);
+
       } else {
         ({ order, totalTime } = solveTSP(matrix));
       }
