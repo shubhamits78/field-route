@@ -260,27 +260,65 @@ function solveTSP(matrix) {
     }
   }
 
-  // Step 3: Or-opt — try moving single stops to a better position
-  let orImproved = true;
-  while (orImproved) {
-    orImproved = false;
-    for (let i = 1; i < n - 1; i++) {
-      for (let j = 1; j < n; j++) {
-        if (j === i || j === i + 1) continue;
-        const node = bestOrder[i];
-        const newOrder = [...bestOrder];
-        newOrder.splice(i, 1);
-        const insertAt = j > i ? j - 1 : j;
-        newOrder.splice(insertAt, 0, node);
-        const newTime = calcTotal(newOrder);
-        if (newTime < bestTime - 0.01) {
-          bestOrder = newOrder;
-          bestTime = newTime;
-          orImproved = true;
-          break;
+ // Step 3: Or-opt — relocate single stops, then pairs
+  for (let segLen = 1; segLen <= 2; segLen++) {
+    let orImproved = true;
+    while (orImproved) {
+      orImproved = false;
+      for (let i = 0; i < n - segLen; i++) {
+        for (let j = 0; j < n - segLen + 1; j++) {
+          if (j >= i - 1 && j <= i + segLen) continue;
+          const seg = bestOrder.slice(i, i + segLen);
+          const without = [...bestOrder.slice(0, i), ...bestOrder.slice(i + segLen)];
+          const insertAt = j > i ? j - segLen + 1 : j;
+          const newOrder = [...without.slice(0, insertAt), ...seg, ...without.slice(insertAt)];
+          if (newOrder.length !== n) continue;
+          const newTime = calcTotal(newOrder);
+          if (newTime < bestTime - 0.01) {
+            bestOrder = newOrder;
+            bestTime = newTime;
+            orImproved = true;
+          }
         }
       }
-      if (orImproved) break;
+    }
+  }
+
+  // Step 4: 3-opt on worst edges
+  const getWorstEdges = (ord, count) => {
+    const edges = [];
+    for (let i = 0; i < ord.length - 1; i++) {
+      edges.push({ i, cost: matrix[ord[i]][ord[i + 1]] });
+    }
+    edges.sort((a, b) => b.cost - a.cost);
+    return edges.slice(0, count).map(e => e.i);
+  };
+
+  const worstEdges = getWorstEdges(bestOrder, Math.min(8, n));
+  for (const ei of worstEdges) {
+    for (let ej = ei + 1; ej < n - 1; ej++) {
+      for (let ek = ej + 1; ek < n; ek++) {
+        const [i, j, k] = [ei, ej, ek];
+        const segments = [
+          bestOrder.slice(0, i + 1),
+          bestOrder.slice(i + 1, j + 1),
+          bestOrder.slice(j + 1, k + 1),
+          bestOrder.slice(k + 1),
+        ];
+        const candidates = [
+          [...segments[0], ...segments[2], ...segments[1], ...segments[3]],
+          [...segments[0], ...segments[1].reverse(), ...segments[2], ...segments[3]],
+          [...segments[0], ...segments[2], ...segments[1].reverse(), ...segments[3]],
+          [...segments[0], ...segments[2].reverse(), ...segments[1], ...segments[3]],
+        ];
+        for (const candidate of candidates) {
+          const t = calcTotal(candidate);
+          if (t < bestTime - 0.01) {
+            bestOrder = candidate;
+            bestTime = t;
+          }
+        }
+      }
     }
   }
 
