@@ -251,15 +251,15 @@ function solveTSP(matrix) {
 // 2-opt cleanup on an existing order. `segments` = [[lo,hi], ...] position ranges
 // (inclusive, indices into `order`) that are allowed to be reordered against
 // each other. Positions outside all segments (e.g. fixed start/end) never move.
-function twoOptPass(ord, matrix, segments) {
+function twoOptPass(ord, matrix, segments, cost) {
   let improved = false;
   for (const [lo, hi] of segments) {
     for (let i = lo; i <= hi; i++) {
       for (let j = i + 1; j <= hi; j++) {
         const a = ord[i - 1], b = ord[i], c = ord[j], d = ord[j + 1];
         if (d === undefined) continue;
-        const before = matrix[a][b] + matrix[c][d];
-        const after = matrix[a][c] + matrix[b][d];
+        const before = cost(a, b) + cost(c, d);
+        const after = cost(a, c) + cost(b, d);
         if (after < before - 1e-9) {
           const seg = ord.slice(i, j + 1).reverse();
           ord.splice(i, seg.length, ...seg);
@@ -273,19 +273,19 @@ function twoOptPass(ord, matrix, segments) {
 
 // Relocate single stops to a better position within the same segment.
 // Fixes stray/outlier points that 2-opt (reversal only) can't fix.
-function orOptPass(ord, matrix, segments) {
+function orOptPass(ord, matrix, segments, cost) {
   let improved = false;
   for (const [lo, hi] of segments) {
     for (let i = lo; i <= hi; i++) {
       const prev = ord[i - 1], node = ord[i], next = ord[i + 1];
       if (next === undefined) continue;
-      const removeCost = matrix[prev][node] + matrix[node][next] - matrix[prev][next];
+      const removeCost = cost(prev, node) + cost(node, next) - cost(prev, next);
       let bestJ = -1, bestGain = 1e-9;
       for (let j = lo - 1; j <= hi; j++) {
         if (j === i - 1 || j === i) continue;
         const a = ord[j], b = ord[j + 1];
         if (b === undefined) continue;
-        const insertCost = matrix[a][node] + matrix[node][b] - matrix[a][b];
+        const insertCost = cost(a, node) + cost(node, b) - cost(a, b);
         const gain = removeCost - insertCost;
         if (gain > bestGain) { bestGain = gain; bestJ = j; }
       }
@@ -300,13 +300,14 @@ function orOptPass(ord, matrix, segments) {
   return improved;
 }
 
-function twoOptOrder(order, matrix, segments) {
+function twoOptOrder(order, matrix, segments, costFn) {
+  const cost = costFn || ((i, j) => matrix[i][j]);
   let ord = [...order];
   let changed = true;
   let guard = 0;
   while (changed && guard < 50) {
-    const a = twoOptPass(ord, matrix, segments);
-    const b = orOptPass(ord, matrix, segments);
+    const a = twoOptPass(ord, matrix, segments, cost);
+    const b = orOptPass(ord, matrix, segments, cost);
     changed = a || b;
     guard++;
   }
@@ -1035,7 +1036,9 @@ const toggleVisited = (id) => {
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
         let fullOrder = [0, ...bestMiddle.map(i => i + 1), officeIdx];
-        fullOrder = twoOptOrder(fullOrder, matrix, [[1, n]]); // whole route as one segment — free to smooth across priority/non-priority boundary
+        const prioritySet = np > 0 ? new Set(Array.from({ length: np }, (_, i) => i + 1)) : null;
+        const costFn = prioritySet ? (i, j) => matrix[i][j] * (prioritySet.has(j) ? PRIORITY_BIAS : 1) : undefined;
+        fullOrder = twoOptOrder(fullOrder, matrix, [[1, n]], costFn); // whole route as one segment — free to smooth across priority/non-priority boundary, still priority-aware
         order = fullOrder;
         totalTime = 0;
         for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
@@ -1062,7 +1065,9 @@ const toggleVisited = (id) => {
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
        let fullOrderNoEnd = [0, ...bestMiddle.map(i => i + 1)];
-        fullOrderNoEnd = twoOptOrder(fullOrderNoEnd, matrix, [[1, n]]);
+        const prioritySetNoEnd = npStartOnly > 0 ? new Set(Array.from({ length: npStartOnly }, (_, i) => i + 1)) : null;
+        const costFnNoEnd = prioritySetNoEnd ? (i, j) => matrix[i][j] * (prioritySetNoEnd.has(j) ? PRIORITY_BIAS : 1) : undefined;
+        fullOrderNoEnd = twoOptOrder(fullOrderNoEnd, matrix, [[1, n]], costFnNoEnd);
         order = fullOrderNoEnd;
         totalTime = 0;
         for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
