@@ -250,26 +250,64 @@ function solveTSP(matrix) {
 // 2-opt cleanup on an existing order. `segments` = [[lo,hi], ...] position ranges
 // (inclusive, indices into `order`) that are allowed to be reordered against
 // each other. Positions outside all segments (e.g. fixed start/end) never move.
-function twoOptOrder(order, matrix, segments) {
-  let ord = [...order];
-  let improved = true;
-  while (improved) {
-    improved = false;
-    for (const [lo, hi] of segments) {
-      for (let i = lo; i <= hi; i++) {
-        for (let j = i + 1; j <= hi; j++) {
-          const a = ord[i - 1], b = ord[i], c = ord[j], d = ord[j + 1];
-          if (d === undefined) continue;
-          const before = matrix[a][b] + matrix[c][d];
-          const after = matrix[a][c] + matrix[b][d];
-          if (after < before - 1e-9) {
-            const seg = ord.slice(i, j + 1).reverse();
-            ord.splice(i, seg.length, ...seg);
-            improved = true;
-          }
+function twoOptPass(ord, matrix, segments) {
+  let improved = false;
+  for (const [lo, hi] of segments) {
+    for (let i = lo; i <= hi; i++) {
+      for (let j = i + 1; j <= hi; j++) {
+        const a = ord[i - 1], b = ord[i], c = ord[j], d = ord[j + 1];
+        if (d === undefined) continue;
+        const before = matrix[a][b] + matrix[c][d];
+        const after = matrix[a][c] + matrix[b][d];
+        if (after < before - 1e-9) {
+          const seg = ord.slice(i, j + 1).reverse();
+          ord.splice(i, seg.length, ...seg);
+          improved = true;
         }
       }
     }
+  }
+  return improved;
+}
+
+// Relocate single stops to a better position within the same segment.
+// Fixes stray/outlier points that 2-opt (reversal only) can't fix.
+function orOptPass(ord, matrix, segments) {
+  let improved = false;
+  for (const [lo, hi] of segments) {
+    for (let i = lo; i <= hi; i++) {
+      const prev = ord[i - 1], node = ord[i], next = ord[i + 1];
+      if (next === undefined) continue;
+      const removeCost = matrix[prev][node] + matrix[node][next] - matrix[prev][next];
+      let bestJ = -1, bestGain = 1e-9;
+      for (let j = lo - 1; j <= hi; j++) {
+        if (j === i - 1 || j === i) continue;
+        const a = ord[j], b = ord[j + 1];
+        if (b === undefined) continue;
+        const insertCost = matrix[a][node] + matrix[node][b] - matrix[a][b];
+        const gain = removeCost - insertCost;
+        if (gain > bestGain) { bestGain = gain; bestJ = j; }
+      }
+      if (bestJ !== -1) {
+        ord.splice(i, 1);
+        const insertAt = bestJ < i ? bestJ + 1 : bestJ;
+        ord.splice(insertAt, 0, node);
+        improved = true;
+      }
+    }
+  }
+  return improved;
+}
+
+function twoOptOrder(order, matrix, segments) {
+  let ord = [...order];
+  let changed = true;
+  let guard = 0;
+  while (changed && guard < 50) {
+    const a = twoOptPass(ord, matrix, segments);
+    const b = orOptPass(ord, matrix, segments);
+    changed = a || b;
+    guard++;
   }
   return ord;
 }
