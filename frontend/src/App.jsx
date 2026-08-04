@@ -169,7 +169,7 @@ const EMPTY_DAY = (day) => ({ day, locations: [], optimizedOrder: null, routeGeo
 const EMPTY_MASTER = () => Object.fromEntries(Array.from({ length: 6 }, (_, i) => [i + 1, []]));
 
 const FREQ_LABELS = { weekly: "7d", biweekly: "14d", monthly: "30d" };
-const PRIORITY_BIAS = 0.65; // <1 makes priority stops look "closer" during the greedy pass — soft nudge, not a hard rule
+const MAX_PRIORITY_DETOUR_PCT = 0.12; // priority stops can move earlier only if it adds at most 12% extra real distance
 
 // ============================================================
 // GEOCODING
@@ -310,6 +310,35 @@ function twoOptOrder(order, matrix, segments, costFn) {
     const b = orOptPass(ord, matrix, segments, cost);
     changed = a || b;
     guard++;
+  }
+  return ord;
+}
+
+// Final, isolated pass: try to pull each priority node to the earliest position
+// possible without increasing total real route distance beyond the cap.
+// Runs strictly AFTER distance optimization — never influences it.
+function prioritizeOrder(order, matrix, priorityNodes, lockStart, lockEnd) {
+  const routeLen = (o) => {
+    let t = 0;
+    for (let i = 0; i < o.length - 1; i++) t += matrix[o[i]][o[i + 1]];
+    return t;
+  };
+  let ord = [...order];
+  const baseLen = routeLen(ord);
+  const lowBound = lockStart ? 1 : 0;
+  const highBoundOffset = lockEnd ? 1 : 0;
+
+  for (const node of priorityNodes) {
+    const curIdx = ord.indexOf(node);
+    if (curIdx === -1 || curIdx <= lowBound) continue;
+    let best = null;
+    for (let pos = lowBound; pos < curIdx; pos++) {
+      const test = [...ord];
+      test.splice(curIdx, 1);
+      test.splice(pos, 0, node);
+      if (routeLen(test) <= baseLen * (1 + MAX_PRIORITY_DETOUR_PCT)) { best = test; break; }
+    }
+    if (best) ord = best;
   }
   return ord;
 }
@@ -1015,17 +1044,14 @@ const toggleVisited = (id) => {
         const subMatrix = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => matrix[i + 1][j + 1]));
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
         let bestCost = Infinity;
-       const startCandidates = Array.from({ length: n }, (_, i) => i);
+      const startCandidates = Array.from({ length: n }, (_, i) => i);
         for (let s of startCandidates) {
           const vis = new Array(n).fill(false);
           const ord = [s]; vis[s] = true; let cur = s, t = 0;
           for (let i = 1; i < n; i++) {
-            let near = -1, nearScore = Infinity, nearD = 0;
+            let near = -1, nearD = Infinity;
             for (let j = 0; j < n; j++) {
-              if (vis[j]) continue;
-              const d = subMatrix[cur][j];
-              const score = j < np ? d * PRIORITY_BIAS : d; // priority stops (indices 0..np-1) look closer, not forced
-              if (score < nearScore) { nearScore = score; near = j; nearD = d; }
+              if (!vis[j] && subMatrix[cur][j] < nearD) { nearD = subMatrix[cur][j]; near = j; }
             }
             if (near === -1) break;
             vis[near] = true; ord.push(near); t += nearD; cur = near;
@@ -1036,9 +1062,11 @@ const toggleVisited = (id) => {
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
         let fullOrder = [0, ...bestMiddle.map(i => i + 1), officeIdx];
-        const prioritySet = np > 0 ? new Set(Array.from({ length: np }, (_, i) => i + 1)) : null;
-        const costFn = prioritySet ? (i, j) => matrix[i][j] * (prioritySet.has(j) ? PRIORITY_BIAS : 1) : undefined;
-        fullOrder = twoOptOrder(fullOrder, matrix, [[1, n]], costFn); // whole route as one segment — free to smooth across priority/non-priority boundary, still priority-aware
+        fullOrder = twoOptOrder(fullOrder, matrix, [[1, n]]); // pure real-distance optimization, no priority influence here
+        if (np > 0) {
+          const priorityNodes = Array.from({ length: np }, (_, i) => i + 1);
+          fullOrder = prioritizeOrder(fullOrder, matrix, priorityNodes, true, true);
+        }
         order = fullOrder;
         totalTime = 0;
         for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
@@ -1051,12 +1079,9 @@ const toggleVisited = (id) => {
           const vis = new Array(n).fill(false);
           const ord = [s]; vis[s] = true; let cur = s, t = 0;
           for (let i = 1; i < n; i++) {
-            let near = -1, nearScore = Infinity, nearD = 0;
+            let near = -1, nearD = Infinity;
             for (let j = 0; j < n; j++) {
-              if (vis[j]) continue;
-              const d = matrix[cur + 1][j + 1];
-              const score = j < npStartOnly ? d * PRIORITY_BIAS : d;
-              if (score < nearScore) { nearScore = score; near = j; nearD = d; }
+              if (!vis[j] && matrix[cur + 1][j + 1] < nearD) { nearD = matrix[cur + 1][j + 1]; near = j; }
             }
             if (near === -1) break;
             vis[near] = true; ord.push(near); t += nearD; cur = near;
@@ -1065,9 +1090,11 @@ const toggleVisited = (id) => {
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
        let fullOrderNoEnd = [0, ...bestMiddle.map(i => i + 1)];
-        const prioritySetNoEnd = npStartOnly > 0 ? new Set(Array.from({ length: npStartOnly }, (_, i) => i + 1)) : null;
-        const costFnNoEnd = prioritySetNoEnd ? (i, j) => matrix[i][j] * (prioritySetNoEnd.has(j) ? PRIORITY_BIAS : 1) : undefined;
-        fullOrderNoEnd = twoOptOrder(fullOrderNoEnd, matrix, [[1, n]], costFnNoEnd);
+        fullOrderNoEnd = twoOptOrder(fullOrderNoEnd, matrix, [[1, n]]); // pure real-distance optimization
+        if (npStartOnly > 0) {
+          const priorityNodesNoEnd = Array.from({ length: npStartOnly }, (_, i) => i + 1);
+          fullOrderNoEnd = prioritizeOrder(fullOrderNoEnd, matrix, priorityNodesNoEnd, true, false);
+        }
         order = fullOrderNoEnd;
         totalTime = 0;
         for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
