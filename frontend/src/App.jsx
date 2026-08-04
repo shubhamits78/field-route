@@ -247,6 +247,33 @@ function solveTSP(matrix) {
   return { order: bestOrder, totalTime: total };
 }
 
+// 2-opt cleanup on an existing order. `segments` = [[lo,hi], ...] position ranges
+// (inclusive, indices into `order`) that are allowed to be reordered against
+// each other. Positions outside all segments (e.g. fixed start/end) never move.
+function twoOptOrder(order, matrix, segments) {
+  let ord = [...order];
+  let improved = true;
+  while (improved) {
+    improved = false;
+    for (const [lo, hi] of segments) {
+      for (let i = lo; i <= hi; i++) {
+        for (let j = i + 1; j <= hi; j++) {
+          const a = ord[i - 1], b = ord[i], c = ord[j], d = ord[j + 1];
+          if (d === undefined) continue;
+          const before = matrix[a][b] + matrix[c][d];
+          const after = matrix[a][c] + matrix[b][d];
+          if (after < before - 1e-9) {
+            const seg = ord.slice(i, j + 1).reverse();
+            ord.splice(i, seg.length, ...seg);
+            improved = true;
+          }
+        }
+      }
+    }
+  }
+  return ord;
+}
+
 // ============================================================
 // MAP COMPONENT — untouched logic, minor marker style refresh
 // ============================================================
@@ -973,8 +1000,12 @@ const toggleVisited = (id) => {
           const totalCost = homeCost + t + officeCost;
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
-        order = [0, ...bestMiddle.map(i => i + 1), officeIdx];
-        totalTime = bestCost;
+        let fullOrder = [0, ...bestMiddle.map(i => i + 1), officeIdx];
+        const segs = np > 0 && np < n ? [[1, np], [np + 1, n]] : [[1, n]];
+        fullOrder = twoOptOrder(fullOrder, matrix, segs);
+        order = fullOrder;
+        totalTime = 0;
+        for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
       } else if (startLoc && !endLoc && middleLocs.length >= 1) {
         const n = middleLocs.length;
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
@@ -993,8 +1024,11 @@ const toggleVisited = (id) => {
           const totalCost = matrix[0][ord[0] + 1] + t;
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
-        order = [0, ...bestMiddle.map(i => i + 1)];
-        totalTime = bestCost;
+       let fullOrderNoEnd = [0, ...bestMiddle.map(i => i + 1)];
+        fullOrderNoEnd = twoOptOrder(fullOrderNoEnd, matrix, [[1, n]]);
+        order = fullOrderNoEnd;
+        totalTime = 0;
+        for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
       } else {
         ({ order, totalTime } = solveTSP(matrix));
       }
