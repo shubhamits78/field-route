@@ -1755,82 +1755,127 @@ const toggleVisited = (id) => {
 }
 
 // ============================================================
-// ORDER TAB — tap to log, order history, shop profile
+// ORDER TAB — redesigned with min target, amount punched, SKUs, notes, monthly reset
 // ============================================================
-function OrderTab({ masterShops, locationNames, currentLocationNum }) {
-  // orders stored as { shopId: [{ amount, date, note }] }
-  const [orders, setOrders] = useState(() => {
-    const s = localStorage.getItem("frp_orders_v2");
-    return s ? JSON.parse(s) : {};
-  });
-  const [activeLocTab, setActiveLocTab] = useState(currentLocationNum || 1);
-  const [activeShop, setActiveShop] = useState(null); // shop object for drawer
-  const [drawerAmount, setDrawerAmount] = useState("");
-  const [drawerNote, setDrawerNote] = useState("");
-  const [drawerOwner, setDrawerOwner] = useState("");
-  const [drawerPhone, setDrawerPhone] = useState("");
 
-  // Sync location tab when currentLocationNum changes (user switches day in Route)
+function getCurrentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function OrderTab({ masterShops, locationNames, currentLocationNum }) {
+  const [activeLocTab, setActiveLocTab] = useState(currentLocationNum || 1);
+  const [activeShop, setActiveShop] = useState(null);
+
+  // orderData shape: { [shopId]: { target, entries: [{ amount, skus, note, date }] } }
+  // stored per month: frp_orders_v3_YYYY-MM
+  const storageKey = () => `frp_orders_v3_${getCurrentMonth()}`;
+
+  const loadOrders = () => {
+    const s = localStorage.getItem(storageKey());
+    return s ? JSON.parse(s) : {};
+  };
+
+  const [orderData, setOrderData] = useState(loadOrders);
+
+  // Check on mount + every minute if month rolled over
+  useEffect(() => {
+    const check = () => {
+      const fresh = loadOrders();
+      setOrderData(fresh);
+    };
+    check();
+    const interval = setInterval(check, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Sync location tab
   useEffect(() => {
     if (currentLocationNum) setActiveLocTab(currentLocationNum);
   }, [currentLocationNum]);
 
-  const shops = [...(masterShops[activeLocTab] || [])].sort((a, b) => a.name.localeCompare(b.name));
-
-  const getHistory = (shopId) => orders[shopId] || [];
-  const getTotal = (shopId) => getHistory(shopId).reduce((sum, e) => sum + Number(e.amount), 0);
+  const shops = [...(masterShops[activeLocTab] || [])].sort((a, b) =>
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+  );
 
   const saveOrders = (next) => {
-    setOrders(next);
-    localStorage.setItem("frp_orders_v2", JSON.stringify(next));
+    setOrderData(next);
+    localStorage.setItem(storageKey(), JSON.stringify(next));
   };
 
-  const addEntry = () => {
-    if (!drawerAmount || isNaN(drawerAmount) || !activeShop) return;
-    const entry = {
-      amount: Number(drawerAmount),
-      date: getTodayDate(),
-      note: drawerNote.trim(),
-    };
-    const prev = orders[activeShop.id] || [];
-    saveOrders({ ...orders, [activeShop.id]: [entry, ...prev] });
-    setDrawerAmount("");
-    setDrawerNote("");
-  };
+  const getShopData = (shopId) => orderData[shopId] || { target: "", entries: [] };
 
-  // Save contact details per shop in localStorage
-  const contactKey = (shopId) => `frp_contact_${shopId}`;
-  const loadContact = (shopId) => {
-    const s = localStorage.getItem(contactKey(shopId));
-    return s ? JSON.parse(s) : { owner: "", phone: "" };
-  };
-  const saveContact = (shopId) => {
-    localStorage.setItem(contactKey(shopId), JSON.stringify({ owner: drawerOwner, phone: drawerPhone }));
-  };
+  const getTotalAmount = (shopId) =>
+    getShopData(shopId).entries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+  const getTotalSkus = (shopId) =>
+    getShopData(shopId).entries.reduce((sum, e) => sum + Number(e.skus || 0), 0);
+
+  // Drawer state
+  const [drawerAmount, setDrawerAmount] = useState("");
+  const [drawerSkus, setDrawerSkus] = useState("");
+  const [drawerNote, setDrawerNote] = useState("");
+  const [drawerTarget, setDrawerTarget] = useState("");
+  const [editingTarget, setEditingTarget] = useState(false);
 
   const openDrawer = (shop) => {
     setActiveShop(shop);
-    const contact = loadContact(shop.id);
-    setDrawerOwner(contact.owner);
-    setDrawerPhone(contact.phone);
+    const data = getShopData(shop.id);
+    setDrawerTarget(data.target || "");
     setDrawerAmount("");
+    setDrawerSkus("");
+    setDrawerNote("");
+    setEditingTarget(false);
+  };
+
+  const closeDrawer = () => setActiveShop(null);
+
+  const saveTarget = () => {
+    const data = getShopData(activeShop.id);
+    saveOrders({ ...orderData, [activeShop.id]: { ...data, target: drawerTarget } });
+    setEditingTarget(false);
+  };
+
+  const addEntry = () => {
+    if ((!drawerAmount && !drawerSkus) || !activeShop) return;
+    const entry = {
+      amount: Number(drawerAmount) || 0,
+      skus: Number(drawerSkus) || 0,
+      note: drawerNote.trim(),
+      date: getTodayDate(),
+    };
+    const data = getShopData(activeShop.id);
+    const updated = { ...data, entries: [entry, ...data.entries] };
+    saveOrders({ ...orderData, [activeShop.id]: updated });
+    setDrawerAmount("");
+    setDrawerSkus("");
     setDrawerNote("");
   };
 
-  const closeDrawer = () => {
-    if (activeShop) saveContact(activeShop.id);
-    setActiveShop(null);
-  };
-
   const deleteEntry = (shopId, idx) => {
-    const updated = (orders[shopId] || []).filter((_, i) => i !== idx);
-    saveOrders({ ...orders, [shopId]: updated });
+    const data = getShopData(shopId);
+    const updated = { ...data, entries: data.entries.filter((_, i) => i !== idx) };
+    saveOrders({ ...orderData, [shopId]: updated });
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#080d14", position: "relative" }}>
 
-      {/* Location tabs — synced to current day */}
+      {/* Month badge */}
+      <div style={{
+        padding: "6px 14px", background: "#050810",
+        borderBottom: "1px solid #111827", flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+      }}>
+        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151" }}>
+          {new Date().toLocaleString("default", { month: "long", year: "numeric" }).toUpperCase()}
+        </div>
+        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#1f2937" }}>
+          resets 1st of each month
+        </div>
+      </div>
+
+      {/* Location tabs */}
       <div style={{
         display: "flex", overflowX: "auto", scrollbarWidth: "none",
         borderBottom: "1px solid #111827", flexShrink: 0,
@@ -1859,7 +1904,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
         })}
       </div>
 
-      {/* Shop list — tap to open drawer */}
+      {/* Shop list */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px 80px" }}>
         {shops.length === 0 ? (
           <div className="empty" style={{ paddingTop: 48 }}>
@@ -1867,10 +1912,13 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
             <div className="empty-text">No shops here yet.<br />Add from the Route tab.</div>
           </div>
         ) : shops.map(shop => {
-          const total = getTotal(shop.id);
-          const hit = total >= 1000;
-          const pct = Math.min((total / 1000) * 100, 100);
-          const lastEntry = (orders[shop.id] || [])[0];
+          const total = getTotalAmount(shop.id);
+          const skus = getTotalSkus(shop.id);
+          const target = Number(getShopData(shop.id).target) || 0;
+          const hit = target > 0 && total >= target;
+          const pct = target > 0 ? Math.min((total / target) * 100, 100) : 0;
+          const lastEntry = getShopData(shop.id).entries[0];
+
           return (
             <div
               key={shop.id}
@@ -1880,43 +1928,65 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                 border: `1px solid ${hit ? "#0f2d1a" : "#131e2e"}`,
                 borderRadius: 12, padding: "13px 14px", marginBottom: 7,
                 cursor: "pointer", transition: "all 0.12s",
-                display: "flex", alignItems: "center", gap: 12,
               }}
             >
-              {/* Status dot */}
-              <div style={{
-                width: 8, height: 8, minWidth: 8, borderRadius: "50%",
-                background: hit ? "#10b981" : total > 0 ? "#f97316" : "#1f2937",
-              }} />
-
-              {/* Info */}
-              <div style={{ flex: 1, minWidth: 0 }}>
+              {/* Top row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{
-                  fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
-                  fontSize: 14, color: "#f3f4f6",
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}>{shop.name}</div>
-                {lastEntry && (
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
-                    Last: ₹{lastEntry.amount.toLocaleString()} · {lastEntry.date}
-                  </div>
-                )}
-              </div>
-
-              {/* Total + progress */}
-              <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <div style={{
-                  fontFamily: "'JetBrains Mono',monospace", fontSize: 15,
-                  fontWeight: 700, color: hit ? "#10b981" : total > 0 ? "#f97316" : "#374151",
-                }}>₹{total.toLocaleString()}</div>
-                <div style={{ width: 60, height: 3, background: "#1f2937", borderRadius: 4, marginTop: 4 }}>
+                  width: 8, height: 8, minWidth: 8, borderRadius: "50%", flexShrink: 0,
+                  background: hit ? "#10b981" : total > 0 ? "#f97316" : "#1f2937",
+                }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
-                    height: "100%", borderRadius: 4,
-                    background: hit ? "#10b981" : "#f97316",
-                    width: `${pct}%`, transition: "width 0.4s ease",
-                  }} />
+                    fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
+                    fontSize: 14, color: "#f3f4f6",
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  }}>{shop.name}</div>
+                  {lastEntry && (
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#4b5563", marginTop: 2 }}>
+                      last: {lastEntry.date}
+                    </div>
+                  )}
+                </div>
+                {/* Amount + SKUs */}
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{
+                    fontFamily: "'JetBrains Mono',monospace", fontSize: 15, fontWeight: 700,
+                    color: hit ? "#10b981" : total > 0 ? "#f97316" : "#374151",
+                  }}>
+                    ₹{total.toLocaleString()}
+                    {target > 0 && (
+                      <span style={{ fontSize: 9, color: "#4b5563", fontWeight: 400 }}>
+                        {" "}/ ₹{target.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  {skus > 0 && (
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#6b7280", marginTop: 1 }}>
+                      {skus} SKU{skus !== 1 ? "s" : ""}
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* Progress bar — only shown if target is set */}
+              {target > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ height: 3, background: "#1f2937", borderRadius: 4 }}>
+                    <div style={{
+                      height: "100%", borderRadius: 4,
+                      background: hit ? "#10b981" : "#f97316",
+                      width: `${pct}%`, transition: "width 0.4s ease",
+                    }} />
+                  </div>
+                  <div style={{
+                    fontFamily: "'JetBrains Mono',monospace", fontSize: 8,
+                    color: hit ? "#10b981" : "#374151", marginTop: 3, textAlign: "right",
+                  }}>
+                    {hit ? "✓ TARGET HIT" : `${Math.round(pct)}% of target`}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -1926,125 +1996,176 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
       {activeShop && (
         <div style={{
           position: "absolute", inset: 0, zIndex: 100,
-          background: "rgba(0,0,0,0.7)",
-          display: "flex", alignItems: "flex-end",
+          background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "flex-end",
         }} onClick={closeDrawer}>
           <div style={{
             background: "#111827", borderRadius: "20px 20px 0 0",
             border: "1px solid #1f2937", borderBottom: "none",
-            width: "100%", maxHeight: "88vh",
-            display: "flex", flexDirection: "column",
-            overflow: "hidden",
+            width: "100%", maxHeight: "90vh",
+            display: "flex", flexDirection: "column", overflow: "hidden",
           }} onClick={e => e.stopPropagation()}>
 
-            {/* Handle + header */}
+            {/* Header */}
             <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid #1f2937", flexShrink: 0 }}>
               <div style={{ width: 36, height: 4, background: "#374151", borderRadius: 4, margin: "0 auto 14px" }} />
               <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{
-                    fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
-                    fontSize: 16, color: "#f3f4f6",
-                  }}>{activeShop.name}</div>
-                  <div style={{
-                    fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
-                    color: "#f97316", marginTop: 2,
-                  }}>₹{getTotal(activeShop.id).toLocaleString()} this month</div>
+                  <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: 16, color: "#f3f4f6" }}>
+                    {activeShop.name}
+                  </div>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
+                    {getCurrentMonth().replace("-", " · ")}
+                  </div>
                 </div>
-                <button onClick={closeDrawer} style={{
-                  background: "none", border: "none", color: "#4b5563",
-                  fontSize: 22, cursor: "pointer", lineHeight: 1, flexShrink: 0,
-                }}>×</button>
+                <button onClick={closeDrawer} style={{ background: "none", border: "none", color: "#4b5563", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
               </div>
+
+              {/* Live stats in header */}
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <div style={{ flex: 1, background: "#0d1421", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: "#f97316" }}>
+                    ₹{getTotalAmount(activeShop.id).toLocaleString()}
+                  </div>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#374151", marginTop: 2 }}>PUNCHED</div>
+                </div>
+                <div style={{ flex: 1, background: "#0d1421", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: "#818cf8" }}>
+                    {getTotalSkus(activeShop.id)}
+                  </div>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#374151", marginTop: 2 }}>SKUS</div>
+                </div>
+                <div style={{ flex: 1, background: "#0d1421", borderRadius: 10, padding: "10px 12px", textAlign: "center",
+                  cursor: "pointer" }} onClick={() => setEditingTarget(true)}>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: "#10b981" }}>
+                    {drawerTarget ? `₹${Number(drawerTarget).toLocaleString()}` : "—"}
+                  </div>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#374151", marginTop: 2 }}>TARGET ✎</div>
+                </div>
+              </div>
+
+              {/* Target edit inline */}
+              {editingTarget && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <input
+                    className="field"
+                    type="number"
+                    placeholder="Min order target (₹)"
+                    value={drawerTarget}
+                    onChange={e => setDrawerTarget(e.target.value)}
+                    autoFocus
+                    style={{ flex: 1, padding: "8px 11px", fontSize: 13 }}
+                  />
+                  <button onClick={saveTarget} style={{
+                    padding: "8px 14px", background: "#10b981", border: "none",
+                    borderRadius: 10, color: "#080d14", fontFamily: "'Space Grotesk',sans-serif",
+                    fontWeight: 700, fontSize: 12, cursor: "pointer",
+                  }}>Set</button>
+                  <button onClick={() => setEditingTarget(false)} style={{
+                    padding: "8px 10px", background: "#1f2937", border: "none",
+                    borderRadius: 10, color: "#6b7280", fontSize: 12, cursor: "pointer",
+                  }}>✕</button>
+                </div>
+              )}
+
+              {/* Progress bar */}
+              {Number(drawerTarget) > 0 && (() => {
+                const total = getTotalAmount(activeShop.id);
+                const target = Number(drawerTarget);
+                const pct = Math.min((total / target) * 100, 100);
+                const hit = total >= target;
+                return (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ height: 4, background: "#1f2937", borderRadius: 4 }}>
+                      <div style={{
+                        height: "100%", borderRadius: 4,
+                        background: hit ? "#10b981" : "#f97316",
+                        width: `${pct}%`, transition: "width 0.4s ease",
+                      }} />
+                    </div>
+                    <div style={{
+                      fontFamily: "'JetBrains Mono',monospace", fontSize: 9,
+                      color: hit ? "#10b981" : "#374151", marginTop: 3, textAlign: "right",
+                    }}>
+                      {hit ? "✓ TARGET HIT" : `₹${(target - total).toLocaleString()} remaining`}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 24px" }}>
 
-         {/* Contact + Order — single save */}
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>CONTACT</div>
+              {/* Log entry */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 10 }}>
+                  LOG ORDER
+                </div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <input
                     className="field"
-                    placeholder="Owner name"
-                    value={drawerOwner}
-                    onChange={e => setDrawerOwner(e.target.value)}
-                    style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
+                    type="number"
+                    placeholder="₹ Amount"
+                    value={drawerAmount}
+                    onChange={e => setDrawerAmount(e.target.value)}
+                    style={{ flex: 1, padding: "10px 12px", fontSize: 14 }}
                   />
-                  <button
-                    onClick={() => { if (drawerPhone) window.location.href = "tel:" + drawerPhone; }}
-                    style={{
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      width: 40, borderRadius: 10, flexShrink: 0,
-                      background: drawerPhone ? "#0a2218" : "#1f2937",
-                      color: drawerPhone ? "#10b981" : "#374151",
-                      fontSize: 18, border: "none", cursor: "pointer",
-                    }}
-                  >
-                    📞
-                  </button>
+                  <input
+                    className="field"
+                    type="number"
+                    placeholder="SKUs"
+                    value={drawerSkus}
+                    onChange={e => setDrawerSkus(e.target.value)}
+                    style={{ width: 80, padding: "10px 12px", fontSize: 14 }}
+                  />
                 </div>
-                <input
-                  className="field"
-                  placeholder="Phone number"
-                  value={drawerPhone}
-                  type="tel"
-                  onChange={e => setDrawerPhone(e.target.value)}
-                  style={{ marginBottom: 12, padding: "8px 11px", fontSize: 12 }}
-                />
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>LOG ORDER</div>
-                <input
-                  className="field"
-                  type="number"
-                  placeholder="₹ Amount (optional)"
-                  value={drawerAmount}
-                  onChange={e => setDrawerAmount(e.target.value)}
-                  style={{ marginBottom: 8, padding: "10px 12px", fontSize: 14 }}
-                />
                 <input
                   className="field"
                   placeholder="Note (optional)"
                   value={drawerNote}
                   onChange={e => setDrawerNote(e.target.value)}
-                  style={{ marginBottom: 12, padding: "8px 11px", fontSize: 12 }}
+                  style={{ marginBottom: 10, padding: "8px 11px", fontSize: 12 }}
                 />
                 <button
-                 onClick={() => {
-                    saveContact(activeShop.id);
-                    if (drawerAmount && !isNaN(drawerAmount)) addEntry();
-                    closeDrawer();
-                  }}
+                  onClick={() => { addEntry(); closeDrawer(); }}
+                  disabled={!drawerAmount && !drawerSkus}
                   style={{
-                    padding: "12px", background: "#f97316",
-                    border: "none", borderRadius: 10,
+                    padding: "12px", background: "#f97316", border: "none", borderRadius: 10,
                     color: "#080d14", fontFamily: "'Space Grotesk',sans-serif",
                     fontWeight: 700, fontSize: 13, cursor: "pointer", width: "100%",
+                    opacity: (!drawerAmount && !drawerSkus) ? 0.35 : 1,
                   }}
                 >
-                  Save
+                  Save Entry
                 </button>
               </div>
 
-              {/* Order history */}
+              {/* History */}
               <div>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>
-                  HISTORY · {getHistory(activeShop.id).length} ENTRIES
+                  HISTORY · {getShopData(activeShop.id).entries.length} ENTRIES
                 </div>
-                {getHistory(activeShop.id).length === 0 ? (
+                {getShopData(activeShop.id).entries.length === 0 ? (
                   <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#1f2937", padding: "12px 0" }}>
-                    No orders yet. Log your first one above.
+                    No entries this month.
                   </div>
-                ) : getHistory(activeShop.id).map((entry, idx) => (
+                ) : getShopData(activeShop.id).entries.map((entry, idx) => (
                   <div key={idx} style={{
-                    display: "flex", alignItems: "center", gap: 10,
-                    padding: "10px 0",
-                    borderBottom: idx < getHistory(activeShop.id).length - 1 ? "1px solid #111827" : "none",
+                    display: "flex", alignItems: "center", gap: 10, padding: "10px 0",
+                    borderBottom: idx < getShopData(activeShop.id).entries.length - 1 ? "1px solid #111827" : "none",
                   }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{
-                        fontFamily: "'JetBrains Mono',monospace", fontWeight: 700,
-                        fontSize: 14, color: "#f97316",
-                      }}>₹{Number(entry.amount).toLocaleString()}</div>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        {entry.amount > 0 && (
+                          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 13, color: "#f97316" }}>
+                            ₹{Number(entry.amount).toLocaleString()}
+                          </span>
+                        )}
+                        {entry.skus > 0 && (
+                          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#818cf8" }}>
+                            {entry.skus} SKU{entry.skus !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </div>
                       {entry.note && (
                         <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
                           {entry.note}
@@ -2055,8 +2176,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                       {entry.date}
                     </div>
                     <button onClick={() => deleteEntry(activeShop.id, idx)} style={{
-                      background: "none", border: "none", color: "#374151",
-                      fontSize: 16, cursor: "pointer", padding: "0 2px",
+                      background: "none", border: "none", color: "#374151", fontSize: 16, cursor: "pointer", padding: "0 2px",
                     }}>×</button>
                   </div>
                 ))}
