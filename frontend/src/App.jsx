@@ -169,6 +169,7 @@ const EMPTY_DAY = (day) => ({ day, locations: [], optimizedOrder: null, routeGeo
 const EMPTY_MASTER = () => Object.fromEntries(Array.from({ length: 6 }, (_, i) => [i + 1, []]));
 
 const FREQ_LABELS = { weekly: "7d", biweekly: "14d", monthly: "30d" };
+const PRIORITY_BIAS = 0.65; // <1 makes priority stops look "closer" during the greedy pass — soft nudge, not a hard rule
 
 // ============================================================
 // GEOCODING
@@ -1013,22 +1014,17 @@ const toggleVisited = (id) => {
         const subMatrix = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => matrix[i + 1][j + 1]));
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
         let bestCost = Infinity;
-        const startCandidates = np > 0 ? Array.from({ length: np }, (_, i) => i) : Array.from({ length: n }, (_, i) => i);
+       const startCandidates = Array.from({ length: n }, (_, i) => i);
         for (let s of startCandidates) {
           const vis = new Array(n).fill(false);
           const ord = [s]; vis[s] = true; let cur = s, t = 0;
           for (let i = 1; i < n; i++) {
-            let near = -1, nearD = Infinity;
-            const stillInPriority = ord.length < np;
+            let near = -1, nearScore = Infinity, nearD = 0;
             for (let j = 0; j < n; j++) {
               if (vis[j]) continue;
-              if (stillInPriority && j >= np) continue;
-              if (subMatrix[cur][j] < nearD) { nearD = subMatrix[cur][j]; near = j; }
-            }
-            if (near === -1) {
-              for (let j = 0; j < n; j++) {
-                if (!vis[j] && subMatrix[cur][j] < nearD) { nearD = subMatrix[cur][j]; near = j; }
-              }
+              const d = subMatrix[cur][j];
+              const score = j < np ? d * PRIORITY_BIAS : d; // priority stops (indices 0..np-1) look closer, not forced
+              if (score < nearScore) { nearScore = score; near = j; nearD = d; }
             }
             if (near === -1) break;
             vis[near] = true; ord.push(near); t += nearD; cur = near;
@@ -1039,22 +1035,25 @@ const toggleVisited = (id) => {
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
         let fullOrder = [0, ...bestMiddle.map(i => i + 1), officeIdx];
-        const segs = np > 0 && np < n ? [[1, np], [np + 1, n]] : [[1, n]];
-        fullOrder = twoOptOrder(fullOrder, matrix, segs);
+        fullOrder = twoOptOrder(fullOrder, matrix, [[1, n]]); // whole route as one segment — free to smooth across priority/non-priority boundary
         order = fullOrder;
         totalTime = 0;
         for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
-      } else if (startLoc && !endLoc && middleLocs.length >= 1) {
+     } else if (startLoc && !endLoc && middleLocs.length >= 1) {
         const n = middleLocs.length;
+        const npStartOnly = priorityLocs.length;
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
         let bestCost = Infinity;
         for (let s = 0; s < n; s++) {
           const vis = new Array(n).fill(false);
           const ord = [s]; vis[s] = true; let cur = s, t = 0;
           for (let i = 1; i < n; i++) {
-            let near = -1, nearD = Infinity;
+            let near = -1, nearScore = Infinity, nearD = 0;
             for (let j = 0; j < n; j++) {
-              if (!vis[j] && matrix[cur + 1][j + 1] < nearD) { nearD = matrix[cur + 1][j + 1]; near = j; }
+              if (vis[j]) continue;
+              const d = matrix[cur + 1][j + 1];
+              const score = j < npStartOnly ? d * PRIORITY_BIAS : d;
+              if (score < nearScore) { nearScore = score; near = j; nearD = d; }
             }
             if (near === -1) break;
             vis[near] = true; ord.push(near); t += nearD; cur = near;
