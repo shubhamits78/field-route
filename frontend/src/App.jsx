@@ -210,8 +210,6 @@ async function getRouteGeometry(locations) {
 function solveTSP(matrix) {
   const n = matrix.length;
   if (n <= 1) return { order: [0], totalTime: 0 };
-
-  // Step 1: Build greedy nearest-neighbor from every starting point
   let bestOrder = null, bestTime = Infinity;
   for (let start = 0; start < n; start++) {
     const visited = new Array(n).fill(false);
@@ -231,98 +229,22 @@ function solveTSP(matrix) {
     }
     if (totalTime < bestTime) { bestTime = totalTime; bestOrder = [...order]; }
   }
-
-  // Step 2: Full 2-opt — run until no improvement found
-  const calcTotal = (ord) => {
-    let t = 0;
-    for (let i = 0; i < ord.length - 1; i++) t += matrix[ord[i]][ord[i + 1]];
-    return t;
-  };
-
   let improved = true;
   while (improved) {
     improved = false;
-    for (let i = 0; i < n - 1; i++) {
-      for (let j = i + 2; j < n; j++) {
-        if (i === 0 && j === n - 1) continue; // skip full reversal
-        const newOrder = [
-          ...bestOrder.slice(0, i + 1),
-          ...bestOrder.slice(i + 1, j + 1).reverse(),
-          ...bestOrder.slice(j + 1),
-        ];
-        const newTime = calcTotal(newOrder);
-        if (newTime < bestTime - 0.01) {
-          bestOrder = newOrder;
-          bestTime = newTime;
+    for (let i = 1; i < n - 2; i++) {
+      for (let j = i + 1; j < n - 1; j++) {
+        const [a, b, c, d] = [bestOrder[i - 1], bestOrder[i], bestOrder[j], bestOrder[j + 1]];
+        if (matrix[a][c] + matrix[b][d] < matrix[a][b] + matrix[c][d]) {
+          bestOrder.splice(i, j - i + 1, ...bestOrder.slice(i, j + 1).reverse());
           improved = true;
         }
       }
     }
   }
-
- // Step 3: Or-opt — relocate single stops, then pairs
-  for (let segLen = 1; segLen <= 2; segLen++) {
-    let orImproved = true;
-    while (orImproved) {
-      orImproved = false;
-      for (let i = 0; i < n - segLen; i++) {
-        for (let j = 0; j < n - segLen + 1; j++) {
-          if (j >= i - 1 && j <= i + segLen) continue;
-          const seg = bestOrder.slice(i, i + segLen);
-          const without = [...bestOrder.slice(0, i), ...bestOrder.slice(i + segLen)];
-          const insertAt = j > i ? j - segLen + 1 : j;
-          const newOrder = [...without.slice(0, insertAt), ...seg, ...without.slice(insertAt)];
-          if (newOrder.length !== n) continue;
-          const newTime = calcTotal(newOrder);
-          if (newTime < bestTime - 0.01) {
-            bestOrder = newOrder;
-            bestTime = newTime;
-            orImproved = true;
-          }
-        }
-      }
-    }
-  }
-
-  // Step 4: 3-opt on worst edges
-  const getWorstEdges = (ord, count) => {
-    const edges = [];
-    for (let i = 0; i < ord.length - 1; i++) {
-      edges.push({ i, cost: matrix[ord[i]][ord[i + 1]] });
-    }
-    edges.sort((a, b) => b.cost - a.cost);
-    return edges.slice(0, count).map(e => e.i);
-  };
-
-  const worstEdges = getWorstEdges(bestOrder, Math.min(8, n));
-  for (const ei of worstEdges) {
-    for (let ej = ei + 1; ej < n - 1; ej++) {
-      for (let ek = ej + 1; ek < n; ek++) {
-        const [i, j, k] = [ei, ej, ek];
-        const segments = [
-          bestOrder.slice(0, i + 1),
-          bestOrder.slice(i + 1, j + 1),
-          bestOrder.slice(j + 1, k + 1),
-          bestOrder.slice(k + 1),
-        ];
-        const candidates = [
-          [...segments[0], ...segments[2], ...segments[1], ...segments[3]],
-          [...segments[0], ...segments[1].reverse(), ...segments[2], ...segments[3]],
-          [...segments[0], ...segments[2], ...segments[1].reverse(), ...segments[3]],
-          [...segments[0], ...segments[2].reverse(), ...segments[1], ...segments[3]],
-        ];
-        for (const candidate of candidates) {
-          const t = calcTotal(candidate);
-          if (t < bestTime - 0.01) {
-            bestOrder = candidate;
-            bestTime = t;
-          }
-        }
-      }
-    }
-  }
-
-  return { order: bestOrder, totalTime: bestTime };
+  let total = 0;
+  for (let i = 0; i < bestOrder.length - 1; i++) total += matrix[bestOrder[i]][bestOrder[i + 1]];
+  return { order: bestOrder, totalTime: total };
 }
 
 // ============================================================
