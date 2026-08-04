@@ -169,7 +169,6 @@ const EMPTY_DAY = (day) => ({ day, locations: [], optimizedOrder: null, routeGeo
 const EMPTY_MASTER = () => Object.fromEntries(Array.from({ length: 6 }, (_, i) => [i + 1, []]));
 
 const FREQ_LABELS = { weekly: "7d", biweekly: "14d", monthly: "30d" };
-const MAX_PRIORITY_DETOUR_PCT = 0.12; // priority stops can move earlier only if it adds at most 12% extra real distance
 
 // ============================================================
 // GEOCODING
@@ -211,6 +210,8 @@ async function getRouteGeometry(locations) {
 function solveTSP(matrix) {
   const n = matrix.length;
   if (n <= 1) return { order: [0], totalTime: 0 };
+
+  // Step 1: Build greedy nearest-neighbor from every starting point
   let bestOrder = null, bestTime = Infinity;
   for (let start = 0; start < n; start++) {
     const visited = new Array(n).fill(false);
@@ -230,117 +231,98 @@ function solveTSP(matrix) {
     }
     if (totalTime < bestTime) { bestTime = totalTime; bestOrder = [...order]; }
   }
+
+  // Step 2: Full 2-opt — run until no improvement found
+  const calcTotal = (ord) => {
+    let t = 0;
+    for (let i = 0; i < ord.length - 1; i++) t += matrix[ord[i]][ord[i + 1]];
+    return t;
+  };
+
   let improved = true;
   while (improved) {
     improved = false;
-    for (let i = 1; i < n - 2; i++) {
-      for (let j = i + 1; j < n - 1; j++) {
-        const [a, b, c, d] = [bestOrder[i - 1], bestOrder[i], bestOrder[j], bestOrder[j + 1]];
-        if (matrix[a][c] + matrix[b][d] < matrix[a][b] + matrix[c][d]) {
-          bestOrder.splice(i, j - i + 1, ...bestOrder.slice(i, j + 1).reverse());
+    for (let i = 0; i < n - 1; i++) {
+      for (let j = i + 2; j < n; j++) {
+        if (i === 0 && j === n - 1) continue; // skip full reversal
+        const newOrder = [
+          ...bestOrder.slice(0, i + 1),
+          ...bestOrder.slice(i + 1, j + 1).reverse(),
+          ...bestOrder.slice(j + 1),
+        ];
+        const newTime = calcTotal(newOrder);
+        if (newTime < bestTime - 0.01) {
+          bestOrder = newOrder;
+          bestTime = newTime;
           improved = true;
         }
       }
     }
   }
-  let total = 0;
-  for (let i = 0; i < bestOrder.length - 1; i++) total += matrix[bestOrder[i]][bestOrder[i + 1]];
-  return { order: bestOrder, totalTime: total };
-}
 
-// 2-opt cleanup on an existing order. `segments` = [[lo,hi], ...] position ranges
-// (inclusive, indices into `order`) that are allowed to be reordered against
-// each other. Positions outside all segments (e.g. fixed start/end) never move.
-function twoOptPass(ord, matrix, segments, cost) {
-  let improved = false;
-  for (const [lo, hi] of segments) {
-    for (let i = lo; i <= hi; i++) {
-      for (let j = i + 1; j <= hi; j++) {
-        const a = ord[i - 1], b = ord[i], c = ord[j], d = ord[j + 1];
-        if (d === undefined) continue;
-        const before = cost(a, b) + cost(c, d);
-        const after = cost(a, c) + cost(b, d);
-        if (after < before - 1e-9) {
-          const seg = ord.slice(i, j + 1).reverse();
-          ord.splice(i, seg.length, ...seg);
-          improved = true;
+ // Step 3: Or-opt — relocate single stops, then pairs
+  for (let segLen = 1; segLen <= 2; segLen++) {
+    let orImproved = true;
+    while (orImproved) {
+      orImproved = false;
+      for (let i = 0; i < n - segLen; i++) {
+        for (let j = 0; j < n - segLen + 1; j++) {
+          if (j >= i - 1 && j <= i + segLen) continue;
+          const seg = bestOrder.slice(i, i + segLen);
+          const without = [...bestOrder.slice(0, i), ...bestOrder.slice(i + segLen)];
+          const insertAt = j > i ? j - segLen + 1 : j;
+          const newOrder = [...without.slice(0, insertAt), ...seg, ...without.slice(insertAt)];
+          if (newOrder.length !== n) continue;
+          const newTime = calcTotal(newOrder);
+          if (newTime < bestTime - 0.01) {
+            bestOrder = newOrder;
+            bestTime = newTime;
+            orImproved = true;
+          }
         }
       }
     }
   }
-  return improved;
-}
 
-// Relocate single stops to a better position within the same segment.
-// Fixes stray/outlier points that 2-opt (reversal only) can't fix.
-function orOptPass(ord, matrix, segments, cost) {
-  let improved = false;
-  for (const [lo, hi] of segments) {
-    for (let i = lo; i <= hi; i++) {
-      const prev = ord[i - 1], node = ord[i], next = ord[i + 1];
-      if (next === undefined) continue;
-      const removeCost = cost(prev, node) + cost(node, next) - cost(prev, next);
-      let bestJ = -1, bestGain = 1e-9;
-      for (let j = lo - 1; j <= hi; j++) {
-        if (j === i - 1 || j === i) continue;
-        const a = ord[j], b = ord[j + 1];
-        if (b === undefined) continue;
-        const insertCost = cost(a, node) + cost(node, b) - cost(a, b);
-        const gain = removeCost - insertCost;
-        if (gain > bestGain) { bestGain = gain; bestJ = j; }
-      }
-      if (bestJ !== -1) {
-        ord.splice(i, 1);
-        const insertAt = bestJ < i ? bestJ + 1 : bestJ;
-        ord.splice(insertAt, 0, node);
-        improved = true;
-      }
+  // Step 4: 3-opt on worst edges
+  const getWorstEdges = (ord, count) => {
+    const edges = [];
+    for (let i = 0; i < ord.length - 1; i++) {
+      edges.push({ i, cost: matrix[ord[i]][ord[i + 1]] });
     }
-  }
-  return improved;
-}
-
-function twoOptOrder(order, matrix, segments, costFn) {
-  const cost = costFn || ((i, j) => matrix[i][j]);
-  let ord = [...order];
-  let changed = true;
-  let guard = 0;
-  while (changed && guard < 50) {
-    const a = twoOptPass(ord, matrix, segments, cost);
-    const b = orOptPass(ord, matrix, segments, cost);
-    changed = a || b;
-    guard++;
-  }
-  return ord;
-}
-
-// Final, isolated pass: try to pull each priority node to the earliest position
-// possible without increasing total real route distance beyond the cap.
-// Runs strictly AFTER distance optimization — never influences it.
-function prioritizeOrder(order, matrix, priorityNodes, lockStart, lockEnd) {
-  const routeLen = (o) => {
-    let t = 0;
-    for (let i = 0; i < o.length - 1; i++) t += matrix[o[i]][o[i + 1]];
-    return t;
+    edges.sort((a, b) => b.cost - a.cost);
+    return edges.slice(0, count).map(e => e.i);
   };
-  let ord = [...order];
-  const baseLen = routeLen(ord);
-  const lowBound = lockStart ? 1 : 0;
-  const highBoundOffset = lockEnd ? 1 : 0;
 
-  for (const node of priorityNodes) {
-    const curIdx = ord.indexOf(node);
-    if (curIdx === -1 || curIdx <= lowBound) continue;
-    let best = null;
-    for (let pos = lowBound; pos < curIdx; pos++) {
-      const test = [...ord];
-      test.splice(curIdx, 1);
-      test.splice(pos, 0, node);
-      if (routeLen(test) <= baseLen * (1 + MAX_PRIORITY_DETOUR_PCT)) { best = test; break; }
+  const worstEdges = getWorstEdges(bestOrder, Math.min(8, n));
+  for (const ei of worstEdges) {
+    for (let ej = ei + 1; ej < n - 1; ej++) {
+      for (let ek = ej + 1; ek < n; ek++) {
+        const [i, j, k] = [ei, ej, ek];
+        const segments = [
+          bestOrder.slice(0, i + 1),
+          bestOrder.slice(i + 1, j + 1),
+          bestOrder.slice(j + 1, k + 1),
+          bestOrder.slice(k + 1),
+        ];
+        const candidates = [
+          [...segments[0], ...segments[2], ...segments[1], ...segments[3]],
+          [...segments[0], ...segments[1].reverse(), ...segments[2], ...segments[3]],
+          [...segments[0], ...segments[2], ...segments[1].reverse(), ...segments[3]],
+          [...segments[0], ...segments[2].reverse(), ...segments[1], ...segments[3]],
+        ];
+        for (const candidate of candidates) {
+          const t = calcTotal(candidate);
+          if (t < bestTime - 0.01) {
+            bestOrder = candidate;
+            bestTime = t;
+          }
+        }
+      }
     }
-    if (best) ord = best;
   }
-  return ord;
+
+  return { order: bestOrder, totalTime: bestTime };
 }
 
 // ============================================================
@@ -1037,21 +1019,29 @@ const toggleVisited = (id) => {
       const matrix = await getDistanceMatrix(locs);
       setStatus("Solving route...");
       let order, totalTime;
-   if (startLoc && endLoc && middleLocs.length >= 1) {
+      if (startLoc && endLoc && middleLocs.length >= 1) {
         const n = middleLocs.length;
         const officeIdx = n + 1;
         const np = priorityLocs.length;
         const subMatrix = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => matrix[i + 1][j + 1]));
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
         let bestCost = Infinity;
-      const startCandidates = Array.from({ length: n }, (_, i) => i);
+        const startCandidates = np > 0 ? Array.from({ length: np }, (_, i) => i) : Array.from({ length: n }, (_, i) => i);
         for (let s of startCandidates) {
           const vis = new Array(n).fill(false);
           const ord = [s]; vis[s] = true; let cur = s, t = 0;
           for (let i = 1; i < n; i++) {
             let near = -1, nearD = Infinity;
+            const stillInPriority = ord.length < np;
             for (let j = 0; j < n; j++) {
-              if (!vis[j] && subMatrix[cur][j] < nearD) { nearD = subMatrix[cur][j]; near = j; }
+              if (vis[j]) continue;
+              if (stillInPriority && j >= np) continue;
+              if (subMatrix[cur][j] < nearD) { nearD = subMatrix[cur][j]; near = j; }
+            }
+            if (near === -1) {
+              for (let j = 0; j < n; j++) {
+                if (!vis[j] && subMatrix[cur][j] < nearD) { nearD = subMatrix[cur][j]; near = j; }
+              }
             }
             if (near === -1) break;
             vis[near] = true; ord.push(near); t += nearD; cur = near;
@@ -1061,18 +1051,10 @@ const toggleVisited = (id) => {
           const totalCost = homeCost + t + officeCost;
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
-        let fullOrder = [0, ...bestMiddle.map(i => i + 1), officeIdx];
-        fullOrder = twoOptOrder(fullOrder, matrix, [[1, n]]); // pure real-distance optimization, no priority influence here
-        if (np > 0) {
-          const priorityNodes = Array.from({ length: np }, (_, i) => i + 1);
-          fullOrder = prioritizeOrder(fullOrder, matrix, priorityNodes, true, true);
-        }
-        order = fullOrder;
-        totalTime = 0;
-        for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
-     } else if (startLoc && !endLoc && middleLocs.length >= 1) {
+        order = [0, ...bestMiddle.map(i => i + 1), officeIdx];
+        totalTime = bestCost;
+      } else if (startLoc && !endLoc && middleLocs.length >= 1) {
         const n = middleLocs.length;
-        const npStartOnly = priorityLocs.length;
         let bestMiddle = Array.from({ length: n }, (_, i) => i);
         let bestCost = Infinity;
         for (let s = 0; s < n; s++) {
@@ -1089,15 +1071,8 @@ const toggleVisited = (id) => {
           const totalCost = matrix[0][ord[0] + 1] + t;
           if (totalCost < bestCost) { bestCost = totalCost; bestMiddle = [...ord]; }
         }
-       let fullOrderNoEnd = [0, ...bestMiddle.map(i => i + 1)];
-        fullOrderNoEnd = twoOptOrder(fullOrderNoEnd, matrix, [[1, n]]); // pure real-distance optimization
-        if (npStartOnly > 0) {
-          const priorityNodesNoEnd = Array.from({ length: npStartOnly }, (_, i) => i + 1);
-          fullOrderNoEnd = prioritizeOrder(fullOrderNoEnd, matrix, priorityNodesNoEnd, true, false);
-        }
-        order = fullOrderNoEnd;
-        totalTime = 0;
-        for (let i = 0; i < order.length - 1; i++) totalTime += matrix[order[i]][order[i + 1]];
+        order = [0, ...bestMiddle.map(i => i + 1)];
+        totalTime = bestCost;
       } else {
         ({ order, totalTime } = solveTSP(matrix));
       }
@@ -1780,127 +1755,82 @@ const toggleVisited = (id) => {
 }
 
 // ============================================================
-// ORDER TAB — redesigned with min target, amount punched, SKUs, notes, monthly reset
+// ORDER TAB — tap to log, order history, shop profile
 // ============================================================
-
-function getCurrentMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function OrderTab({ masterShops, locationNames, currentLocationNum }) {
-  const [activeLocTab, setActiveLocTab] = useState(currentLocationNum || 1);
-  const [activeShop, setActiveShop] = useState(null);
-
-  // orderData shape: { [shopId]: { target, entries: [{ amount, skus, note, date }] } }
-  // stored per month: frp_orders_v3_YYYY-MM
-  const storageKey = () => `frp_orders_v3_${getCurrentMonth()}`;
-
-  const loadOrders = () => {
-    const s = localStorage.getItem(storageKey());
+  // orders stored as { shopId: [{ amount, date, note }] }
+  const [orders, setOrders] = useState(() => {
+    const s = localStorage.getItem("frp_orders_v2");
     return s ? JSON.parse(s) : {};
-  };
+  });
+  const [activeLocTab, setActiveLocTab] = useState(currentLocationNum || 1);
+  const [activeShop, setActiveShop] = useState(null); // shop object for drawer
+  const [drawerAmount, setDrawerAmount] = useState("");
+  const [drawerNote, setDrawerNote] = useState("");
+  const [drawerOwner, setDrawerOwner] = useState("");
+  const [drawerPhone, setDrawerPhone] = useState("");
 
-  const [orderData, setOrderData] = useState(loadOrders);
-
-  // Check on mount + every minute if month rolled over
-  useEffect(() => {
-    const check = () => {
-      const fresh = loadOrders();
-      setOrderData(fresh);
-    };
-    check();
-    const interval = setInterval(check, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Sync location tab
+  // Sync location tab when currentLocationNum changes (user switches day in Route)
   useEffect(() => {
     if (currentLocationNum) setActiveLocTab(currentLocationNum);
   }, [currentLocationNum]);
 
-  const shops = [...(masterShops[activeLocTab] || [])].sort((a, b) =>
-    a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-  );
+  const shops = [...(masterShops[activeLocTab] || [])].sort((a, b) => a.name.localeCompare(b.name));
+
+  const getHistory = (shopId) => orders[shopId] || [];
+  const getTotal = (shopId) => getHistory(shopId).reduce((sum, e) => sum + Number(e.amount), 0);
 
   const saveOrders = (next) => {
-    setOrderData(next);
-    localStorage.setItem(storageKey(), JSON.stringify(next));
-  };
-
-  const getShopData = (shopId) => orderData[shopId] || { target: "", entries: [] };
-
-  const getTotalAmount = (shopId) =>
-    getShopData(shopId).entries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-
-  const getTotalSkus = (shopId) =>
-    getShopData(shopId).entries.reduce((sum, e) => sum + Number(e.skus || 0), 0);
-
-  // Drawer state
-  const [drawerAmount, setDrawerAmount] = useState("");
-  const [drawerSkus, setDrawerSkus] = useState("");
-  const [drawerNote, setDrawerNote] = useState("");
-  const [drawerTarget, setDrawerTarget] = useState("");
-  const [editingTarget, setEditingTarget] = useState(false);
-
-  const openDrawer = (shop) => {
-    setActiveShop(shop);
-    const data = getShopData(shop.id);
-    setDrawerTarget(data.target || "");
-    setDrawerAmount("");
-    setDrawerSkus("");
-    setDrawerNote("");
-    setEditingTarget(false);
-  };
-
-  const closeDrawer = () => setActiveShop(null);
-
-  const saveTarget = () => {
-    const data = getShopData(activeShop.id);
-    saveOrders({ ...orderData, [activeShop.id]: { ...data, target: drawerTarget } });
-    setEditingTarget(false);
+    setOrders(next);
+    localStorage.setItem("frp_orders_v2", JSON.stringify(next));
   };
 
   const addEntry = () => {
-    if ((!drawerAmount && !drawerSkus) || !activeShop) return;
+    if (!drawerAmount || isNaN(drawerAmount) || !activeShop) return;
     const entry = {
-      amount: Number(drawerAmount) || 0,
-      skus: Number(drawerSkus) || 0,
-      note: drawerNote.trim(),
+      amount: Number(drawerAmount),
       date: getTodayDate(),
+      note: drawerNote.trim(),
     };
-    const data = getShopData(activeShop.id);
-    const updated = { ...data, entries: [entry, ...data.entries] };
-    saveOrders({ ...orderData, [activeShop.id]: updated });
+    const prev = orders[activeShop.id] || [];
+    saveOrders({ ...orders, [activeShop.id]: [entry, ...prev] });
     setDrawerAmount("");
-    setDrawerSkus("");
     setDrawerNote("");
   };
 
+  // Save contact details per shop in localStorage
+  const contactKey = (shopId) => `frp_contact_${shopId}`;
+  const loadContact = (shopId) => {
+    const s = localStorage.getItem(contactKey(shopId));
+    return s ? JSON.parse(s) : { owner: "", phone: "" };
+  };
+  const saveContact = (shopId) => {
+    localStorage.setItem(contactKey(shopId), JSON.stringify({ owner: drawerOwner, phone: drawerPhone }));
+  };
+
+  const openDrawer = (shop) => {
+    setActiveShop(shop);
+    const contact = loadContact(shop.id);
+    setDrawerOwner(contact.owner);
+    setDrawerPhone(contact.phone);
+    setDrawerAmount("");
+    setDrawerNote("");
+  };
+
+  const closeDrawer = () => {
+    if (activeShop) saveContact(activeShop.id);
+    setActiveShop(null);
+  };
+
   const deleteEntry = (shopId, idx) => {
-    const data = getShopData(shopId);
-    const updated = { ...data, entries: data.entries.filter((_, i) => i !== idx) };
-    saveOrders({ ...orderData, [shopId]: updated });
+    const updated = (orders[shopId] || []).filter((_, i) => i !== idx);
+    saveOrders({ ...orders, [shopId]: updated });
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#080d14", position: "relative" }}>
 
-      {/* Month badge */}
-      <div style={{
-        padding: "6px 14px", background: "#050810",
-        borderBottom: "1px solid #111827", flexShrink: 0,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-      }}>
-        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#374151" }}>
-          {new Date().toLocaleString("default", { month: "long", year: "numeric" }).toUpperCase()}
-        </div>
-        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#1f2937" }}>
-          resets 1st of each month
-        </div>
-      </div>
-
-      {/* Location tabs */}
+      {/* Location tabs — synced to current day */}
       <div style={{
         display: "flex", overflowX: "auto", scrollbarWidth: "none",
         borderBottom: "1px solid #111827", flexShrink: 0,
@@ -1929,7 +1859,7 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
         })}
       </div>
 
-      {/* Shop list */}
+      {/* Shop list — tap to open drawer */}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px 80px" }}>
         {shops.length === 0 ? (
           <div className="empty" style={{ paddingTop: 48 }}>
@@ -1937,13 +1867,10 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
             <div className="empty-text">No shops here yet.<br />Add from the Route tab.</div>
           </div>
         ) : shops.map(shop => {
-          const total = getTotalAmount(shop.id);
-          const skus = getTotalSkus(shop.id);
-          const target = Number(getShopData(shop.id).target) || 0;
-          const hit = target > 0 && total >= target;
-          const pct = target > 0 ? Math.min((total / target) * 100, 100) : 0;
-          const lastEntry = getShopData(shop.id).entries[0];
-
+          const total = getTotal(shop.id);
+          const hit = total >= 1000;
+          const pct = Math.min((total / 1000) * 100, 100);
+          const lastEntry = (orders[shop.id] || [])[0];
           return (
             <div
               key={shop.id}
@@ -1953,65 +1880,43 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                 border: `1px solid ${hit ? "#0f2d1a" : "#131e2e"}`,
                 borderRadius: 12, padding: "13px 14px", marginBottom: 7,
                 cursor: "pointer", transition: "all 0.12s",
+                display: "flex", alignItems: "center", gap: 12,
               }}
             >
-              {/* Top row */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {/* Status dot */}
+              <div style={{
+                width: 8, height: 8, minWidth: 8, borderRadius: "50%",
+                background: hit ? "#10b981" : total > 0 ? "#f97316" : "#1f2937",
+              }} />
+
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{
-                  width: 8, height: 8, minWidth: 8, borderRadius: "50%", flexShrink: 0,
-                  background: hit ? "#10b981" : total > 0 ? "#f97316" : "#1f2937",
-                }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
-                    fontSize: 14, color: "#f3f4f6",
-                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                  }}>{shop.name}</div>
-                  {lastEntry && (
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#4b5563", marginTop: 2 }}>
-                      last: {lastEntry.date}
-                    </div>
-                  )}
-                </div>
-                {/* Amount + SKUs */}
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{
-                    fontFamily: "'JetBrains Mono',monospace", fontSize: 15, fontWeight: 700,
-                    color: hit ? "#10b981" : total > 0 ? "#f97316" : "#374151",
-                  }}>
-                    ₹{total.toLocaleString()}
-                    {target > 0 && (
-                      <span style={{ fontSize: 9, color: "#4b5563", fontWeight: 400 }}>
-                        {" "}/ ₹{target.toLocaleString()}
-                      </span>
-                    )}
+                  fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
+                  fontSize: 14, color: "#f3f4f6",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>{shop.name}</div>
+                {lastEntry && (
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
+                    Last: ₹{lastEntry.amount.toLocaleString()} · {lastEntry.date}
                   </div>
-                  {skus > 0 && (
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#6b7280", marginTop: 1 }}>
-                      {skus} SKU{skus !== 1 ? "s" : ""}
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
 
-              {/* Progress bar — only shown if target is set */}
-              {target > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ height: 3, background: "#1f2937", borderRadius: 4 }}>
-                    <div style={{
-                      height: "100%", borderRadius: 4,
-                      background: hit ? "#10b981" : "#f97316",
-                      width: `${pct}%`, transition: "width 0.4s ease",
-                    }} />
-                  </div>
+              {/* Total + progress */}
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{
+                  fontFamily: "'JetBrains Mono',monospace", fontSize: 15,
+                  fontWeight: 700, color: hit ? "#10b981" : total > 0 ? "#f97316" : "#374151",
+                }}>₹{total.toLocaleString()}</div>
+                <div style={{ width: 60, height: 3, background: "#1f2937", borderRadius: 4, marginTop: 4 }}>
                   <div style={{
-                    fontFamily: "'JetBrains Mono',monospace", fontSize: 8,
-                    color: hit ? "#10b981" : "#374151", marginTop: 3, textAlign: "right",
-                  }}>
-                    {hit ? "✓ TARGET HIT" : `${Math.round(pct)}% of target`}
-                  </div>
+                    height: "100%", borderRadius: 4,
+                    background: hit ? "#10b981" : "#f97316",
+                    width: `${pct}%`, transition: "width 0.4s ease",
+                  }} />
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
@@ -2021,176 +1926,125 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
       {activeShop && (
         <div style={{
           position: "absolute", inset: 0, zIndex: 100,
-          background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "flex-end",
+          background: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "flex-end",
         }} onClick={closeDrawer}>
           <div style={{
             background: "#111827", borderRadius: "20px 20px 0 0",
             border: "1px solid #1f2937", borderBottom: "none",
-            width: "100%", maxHeight: "90vh",
-            display: "flex", flexDirection: "column", overflow: "hidden",
+            width: "100%", maxHeight: "88vh",
+            display: "flex", flexDirection: "column",
+            overflow: "hidden",
           }} onClick={e => e.stopPropagation()}>
 
-            {/* Header */}
+            {/* Handle + header */}
             <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid #1f2937", flexShrink: 0 }}>
               <div style={{ width: 36, height: 4, background: "#374151", borderRadius: 4, margin: "0 auto 14px" }} />
               <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: 16, color: "#f3f4f6" }}>
-                    {activeShop.name}
-                  </div>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
-                    {getCurrentMonth().replace("-", " · ")}
-                  </div>
+                  <div style={{
+                    fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700,
+                    fontSize: 16, color: "#f3f4f6",
+                  }}>{activeShop.name}</div>
+                  <div style={{
+                    fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
+                    color: "#f97316", marginTop: 2,
+                  }}>₹{getTotal(activeShop.id).toLocaleString()} this month</div>
                 </div>
-                <button onClick={closeDrawer} style={{ background: "none", border: "none", color: "#4b5563", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+                <button onClick={closeDrawer} style={{
+                  background: "none", border: "none", color: "#4b5563",
+                  fontSize: 22, cursor: "pointer", lineHeight: 1, flexShrink: 0,
+                }}>×</button>
               </div>
-
-              {/* Live stats in header */}
-              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <div style={{ flex: 1, background: "#0d1421", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: "#f97316" }}>
-                    ₹{getTotalAmount(activeShop.id).toLocaleString()}
-                  </div>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#374151", marginTop: 2 }}>PUNCHED</div>
-                </div>
-                <div style={{ flex: 1, background: "#0d1421", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: "#818cf8" }}>
-                    {getTotalSkus(activeShop.id)}
-                  </div>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#374151", marginTop: 2 }}>SKUS</div>
-                </div>
-                <div style={{ flex: 1, background: "#0d1421", borderRadius: 10, padding: "10px 12px", textAlign: "center",
-                  cursor: "pointer" }} onClick={() => setEditingTarget(true)}>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: "#10b981" }}>
-                    {drawerTarget ? `₹${Number(drawerTarget).toLocaleString()}` : "—"}
-                  </div>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 8, color: "#374151", marginTop: 2 }}>TARGET ✎</div>
-                </div>
-              </div>
-
-              {/* Target edit inline */}
-              {editingTarget && (
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <input
-                    className="field"
-                    type="number"
-                    placeholder="Min order target (₹)"
-                    value={drawerTarget}
-                    onChange={e => setDrawerTarget(e.target.value)}
-                    autoFocus
-                    style={{ flex: 1, padding: "8px 11px", fontSize: 13 }}
-                  />
-                  <button onClick={saveTarget} style={{
-                    padding: "8px 14px", background: "#10b981", border: "none",
-                    borderRadius: 10, color: "#080d14", fontFamily: "'Space Grotesk',sans-serif",
-                    fontWeight: 700, fontSize: 12, cursor: "pointer",
-                  }}>Set</button>
-                  <button onClick={() => setEditingTarget(false)} style={{
-                    padding: "8px 10px", background: "#1f2937", border: "none",
-                    borderRadius: 10, color: "#6b7280", fontSize: 12, cursor: "pointer",
-                  }}>✕</button>
-                </div>
-              )}
-
-              {/* Progress bar */}
-              {Number(drawerTarget) > 0 && (() => {
-                const total = getTotalAmount(activeShop.id);
-                const target = Number(drawerTarget);
-                const pct = Math.min((total / target) * 100, 100);
-                const hit = total >= target;
-                return (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={{ height: 4, background: "#1f2937", borderRadius: 4 }}>
-                      <div style={{
-                        height: "100%", borderRadius: 4,
-                        background: hit ? "#10b981" : "#f97316",
-                        width: `${pct}%`, transition: "width 0.4s ease",
-                      }} />
-                    </div>
-                    <div style={{
-                      fontFamily: "'JetBrains Mono',monospace", fontSize: 9,
-                      color: hit ? "#10b981" : "#374151", marginTop: 3, textAlign: "right",
-                    }}>
-                      {hit ? "✓ TARGET HIT" : `₹${(target - total).toLocaleString()} remaining`}
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 24px" }}>
 
-              {/* Log entry */}
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 10 }}>
-                  LOG ORDER
-                </div>
+         {/* Contact + Order — single save */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>CONTACT</div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <input
                     className="field"
-                    type="number"
-                    placeholder="₹ Amount"
-                    value={drawerAmount}
-                    onChange={e => setDrawerAmount(e.target.value)}
-                    style={{ flex: 1, padding: "10px 12px", fontSize: 14 }}
+                    placeholder="Owner name"
+                    value={drawerOwner}
+                    onChange={e => setDrawerOwner(e.target.value)}
+                    style={{ flex: 1, padding: "8px 11px", fontSize: 12 }}
                   />
-                  <input
-                    className="field"
-                    type="number"
-                    placeholder="SKUs"
-                    value={drawerSkus}
-                    onChange={e => setDrawerSkus(e.target.value)}
-                    style={{ width: 80, padding: "10px 12px", fontSize: 14 }}
-                  />
+                  <button
+                    onClick={() => { if (drawerPhone) window.location.href = "tel:" + drawerPhone; }}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      width: 40, borderRadius: 10, flexShrink: 0,
+                      background: drawerPhone ? "#0a2218" : "#1f2937",
+                      color: drawerPhone ? "#10b981" : "#374151",
+                      fontSize: 18, border: "none", cursor: "pointer",
+                    }}
+                  >
+                    📞
+                  </button>
                 </div>
+                <input
+                  className="field"
+                  placeholder="Phone number"
+                  value={drawerPhone}
+                  type="tel"
+                  onChange={e => setDrawerPhone(e.target.value)}
+                  style={{ marginBottom: 12, padding: "8px 11px", fontSize: 12 }}
+                />
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>LOG ORDER</div>
+                <input
+                  className="field"
+                  type="number"
+                  placeholder="₹ Amount (optional)"
+                  value={drawerAmount}
+                  onChange={e => setDrawerAmount(e.target.value)}
+                  style={{ marginBottom: 8, padding: "10px 12px", fontSize: 14 }}
+                />
                 <input
                   className="field"
                   placeholder="Note (optional)"
                   value={drawerNote}
                   onChange={e => setDrawerNote(e.target.value)}
-                  style={{ marginBottom: 10, padding: "8px 11px", fontSize: 12 }}
+                  style={{ marginBottom: 12, padding: "8px 11px", fontSize: 12 }}
                 />
                 <button
-                  onClick={() => { addEntry(); closeDrawer(); }}
-                  disabled={!drawerAmount && !drawerSkus}
+                 onClick={() => {
+                    saveContact(activeShop.id);
+                    if (drawerAmount && !isNaN(drawerAmount)) addEntry();
+                    closeDrawer();
+                  }}
                   style={{
-                    padding: "12px", background: "#f97316", border: "none", borderRadius: 10,
+                    padding: "12px", background: "#f97316",
+                    border: "none", borderRadius: 10,
                     color: "#080d14", fontFamily: "'Space Grotesk',sans-serif",
                     fontWeight: 700, fontSize: 13, cursor: "pointer", width: "100%",
-                    opacity: (!drawerAmount && !drawerSkus) ? 0.35 : 1,
                   }}
                 >
-                  Save Entry
+                  Save
                 </button>
               </div>
 
-              {/* History */}
+              {/* Order history */}
               <div>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151", letterSpacing: 1.5, marginBottom: 8 }}>
-                  HISTORY · {getShopData(activeShop.id).entries.length} ENTRIES
+                  HISTORY · {getHistory(activeShop.id).length} ENTRIES
                 </div>
-                {getShopData(activeShop.id).entries.length === 0 ? (
+                {getHistory(activeShop.id).length === 0 ? (
                   <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#1f2937", padding: "12px 0" }}>
-                    No entries this month.
+                    No orders yet. Log your first one above.
                   </div>
-                ) : getShopData(activeShop.id).entries.map((entry, idx) => (
+                ) : getHistory(activeShop.id).map((entry, idx) => (
                   <div key={idx} style={{
-                    display: "flex", alignItems: "center", gap: 10, padding: "10px 0",
-                    borderBottom: idx < getShopData(activeShop.id).entries.length - 1 ? "1px solid #111827" : "none",
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "10px 0",
+                    borderBottom: idx < getHistory(activeShop.id).length - 1 ? "1px solid #111827" : "none",
                   }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                        {entry.amount > 0 && (
-                          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, fontSize: 13, color: "#f97316" }}>
-                            ₹{Number(entry.amount).toLocaleString()}
-                          </span>
-                        )}
-                        {entry.skus > 0 && (
-                          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "#818cf8" }}>
-                            {entry.skus} SKU{entry.skus !== 1 ? "s" : ""}
-                          </span>
-                        )}
-                      </div>
+                      <div style={{
+                        fontFamily: "'JetBrains Mono',monospace", fontWeight: 700,
+                        fontSize: 14, color: "#f97316",
+                      }}>₹{Number(entry.amount).toLocaleString()}</div>
                       {entry.note && (
                         <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#4b5563", marginTop: 2 }}>
                           {entry.note}
@@ -2201,7 +2055,8 @@ function OrderTab({ masterShops, locationNames, currentLocationNum }) {
                       {entry.date}
                     </div>
                     <button onClick={() => deleteEntry(activeShop.id, idx)} style={{
-                      background: "none", border: "none", color: "#374151", fontSize: 16, cursor: "pointer", padding: "0 2px",
+                      background: "none", border: "none", color: "#374151",
+                      fontSize: 16, cursor: "pointer", padding: "0 2px",
                     }}>×</button>
                   </div>
                 ))}
