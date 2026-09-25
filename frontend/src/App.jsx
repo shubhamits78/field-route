@@ -99,10 +99,6 @@ async function importShops(file, setMasterShops, setStatus) {
     const next = {};
     for (const [locNum, locShops] of Object.entries(shops)) {
       const patched = locShops.map(s => ({
-        frequency: "weekly",
-        openTime: "09:00",
-        closeTime: "20:00",
-        lastVisited: null,
         visitNote: "",
         ...s,
       }));
@@ -137,22 +133,7 @@ function resetVisitedIfNewDay(dayObj) {
 // Day → Location: Day 1,7,13,19 → Loc 1 | Day 2,8,14,20 → Loc 2 etc.
 const getDayLocation = (day) => ((day - 1) % 6) + 1;
 
-// Days since last visit
-const daysSince = (dateStr) => {
-  if (!dateStr) return null;
-  const diff = Date.now() - new Date(dateStr).getTime();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
-};
 
-// Overdue check based on frequency
-const isOverdue = (shop) => {
-  if (!shop.lastVisited || !shop.frequency) return false;
-  const days = daysSince(shop.lastVisited);
-  if (shop.frequency === "weekly") return days >= 7;
-  if (shop.frequency === "biweekly") return days >= 14;
-  if (shop.frequency === "monthly") return days >= 30;
-  return false;
-};
 
 const fmtTime = (s) => {
   if (!s) return "0m";
@@ -168,7 +149,7 @@ const DAYS = Array.from({ length: 24 }, (_, i) => i + 1);
 const EMPTY_DAY = (day) => ({ day, locations: [], optimizedOrder: null, routeGeometry: null, totalTime: 0, totalDist: 0, updatedAt: null });
 const EMPTY_MASTER = () => Object.fromEntries(Array.from({ length: 6 }, (_, i) => [i + 1, []]));
 
-const FREQ_LABELS = { weekly: "7d", biweekly: "14d", monthly: "30d" };
+const MAX_PRIORITY_DETOUR_PCT = 0.12; // priority stops can move earlier only if it adds at most 12% extra real distance
 
 // ============================================================
 // GEOCODING
@@ -406,13 +387,10 @@ function MapView({ locations, route, onToggleVisited, isFullscreen }) {
 function AddShopModal({ locationNum, onClose, onAdd, geocoding }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [frequency, setFrequency] = useState("weekly");
-  const [openTime, setOpenTime] = useState("09:00");
-  const [closeTime, setCloseTime] = useState("20:00");
 
   const handleAdd = () => {
     if (!name.trim() || !url.trim()) return;
-    onAdd(name.trim(), url.trim(), frequency, openTime, closeTime);
+    onAdd(name.trim(), url.trim());
   };
 
   return (
@@ -460,38 +438,6 @@ function AddShopModal({ locationNum, onClose, onAdd, geocoding }) {
           style={{ marginBottom: 14 }}
         />
 
-        {/* Frequency selector */}
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#6b7280", marginBottom: 6, letterSpacing: 1 }}>VISIT FREQUENCY</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {["weekly", "biweekly", "monthly"].map(f => (
-              <button key={f} onClick={() => setFrequency(f)} style={{
-                flex: 1, padding: "8px 4px",
-                background: frequency === f ? "#f97316" : "#1f2937",
-                border: frequency === f ? "none" : "1px solid #374151",
-                borderRadius: 8, color: frequency === f ? "#0c0f14" : "#6b7280",
-                fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
-                fontWeight: frequency === f ? 700 : 400, cursor: "pointer",
-                transition: "all 0.15s",
-              }}>
-                {f === "weekly" ? "Weekly" : f === "biweekly" ? "2 Weeks" : "Monthly"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Opening hours */}
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#6b7280", marginBottom: 6, letterSpacing: 1 }}>OPENING HOURS</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)}
-              className="field" style={{ flex: 1, padding: "8px 10px", fontSize: 13 }} />
-            <span style={{ color: "#4b5563", fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>to</span>
-            <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)}
-              className="field" style={{ flex: 1, padding: "8px 10px", fontSize: 13 }} />
-          </div>
-        </div>
-
         <button
           className="btn-primary"
           onClick={handleAdd}
@@ -519,15 +465,12 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
     );
   }
 
-  // Sort: overdue first, then normal, then already added
+  // Sort: normal, then already added
   const sorted = [...shops].sort((a, b) => {
     const aAdded = currentDayLocIds.has(a.id);
     const bAdded = currentDayLocIds.has(b.id);
     if (aAdded && !bAdded) return 1;
     if (!aAdded && bAdded) return -1;
-    const aOver = isOverdue(a), bOver = isOverdue(b);
-    if (aOver && !bOver) return -1;
-    if (!aOver && bOver) return 1;
     return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   });
 
@@ -536,8 +479,6 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
       {sorted.map(shop => {
         const added = currentDayLocIds.has(shop.id);
         const selected = selectedIds.has(shop.id);
-        const overdue = isOverdue(shop);
-        const ds = daysSince(shop.lastVisited);
 
         return (
           <div
@@ -545,7 +486,7 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
             onClick={() => added ? onRemoveFromDay(shop.id) : onToggle(shop.id)}
             style={{
               background: added ? "#0a1f12" : selected ? "#0f2218" : "#111827",
-              border: `1px solid ${added ? "#14532d" : selected ? "#22c55e" : overdue ? "#7c2d12" : "#1f2937"}`,
+              border: `1px solid ${added ? "#14532d" : selected ? "#22c55e" : "#1f2937"}`,
               borderRadius: 12,
               padding: "12px 14px",
               cursor: "pointer",
@@ -559,7 +500,7 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
             <div style={{
               width: 22, height: 22, minWidth: 22,
               borderRadius: 7,
-              border: `2px solid ${added || selected ? "#22c55e" : overdue ? "#ea580c" : "#374151"}`,
+              border: `2px solid ${added || selected ? "#22c55e" : "#374151"}`,
               background: added || selected ? "#22c55e" : "transparent",
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 12, color: "#000", fontWeight: 900,
@@ -577,29 +518,6 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
                 textDecoration: added ? "line-through" : "none",
               }}>
                 {shop.name}
-              </div>
-              <div style={{ display: "flex", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
-                {shop.frequency && (
-                  <span style={{
-                    fontFamily: "'JetBrains Mono',monospace", fontSize: 9,
-                    color: overdue ? "#f97316" : "#4b5563",
-                    background: overdue ? "#1c1007" : "#1f2937",
-                    padding: "1px 6px", borderRadius: 4,
-                    border: overdue ? "1px solid #7c2d12" : "none",
-                  }}>
-                    {overdue ? "⚠ OVERDUE" : FREQ_LABELS[shop.frequency]}
-                  </span>
-                )}
-                {ds !== null && (
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151" }}>
-                    {ds === 0 ? "visited today" : `${ds}d ago`}
-                  </span>
-                )}
-                {shop.openTime && (
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 9, color: "#374151" }}>
-                    {shop.openTime}–{shop.closeTime}
-                  </span>
-                )}
               </div>
             </div>
 
@@ -636,13 +554,10 @@ function ShopList({ shops, currentDayLocIds, selectedIds, onToggle, onDeleteShop
 // ============================================================
 function EditShopModal({ shop, onClose, onSave }) {
   const [name, setName] = useState(shop.name);
-  const [frequency, setFrequency] = useState(shop.frequency || "weekly");
-  const [openTime, setOpenTime] = useState(shop.openTime || "09:00");
-  const [closeTime, setCloseTime] = useState(shop.closeTime || "20:00");
 
   const handleSave = () => {
     if (!name.trim()) return;
-    onSave({ ...shop, name: name.trim(), frequency, openTime, closeTime });
+    onSave({ ...shop, name: name.trim() });
   };
 
   return (
@@ -672,36 +587,6 @@ function EditShopModal({ shop, onClose, onSave }) {
           style={{ marginBottom: 14 }}
           autoFocus
         />
-
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#6b7280", marginBottom: 6, letterSpacing: 1 }}>VISIT FREQUENCY</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {["weekly", "biweekly", "monthly"].map(f => (
-              <button key={f} onClick={() => setFrequency(f)} style={{
-                flex: 1, padding: "8px 4px",
-                background: frequency === f ? "#f97316" : "#1f2937",
-                border: frequency === f ? "none" : "1px solid #374151",
-                borderRadius: 8, color: frequency === f ? "#0c0f14" : "#6b7280",
-                fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
-                fontWeight: frequency === f ? 700 : 400, cursor: "pointer",
-                transition: "all 0.15s",
-              }}>
-                {f === "weekly" ? "Weekly" : f === "biweekly" ? "2 Weeks" : "Monthly"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "#6b7280", marginBottom: 6, letterSpacing: 1 }}>OPENING HOURS</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)}
-              className="field" style={{ flex: 1, padding: "8px 10px", fontSize: 13 }} />
-            <span style={{ color: "#4b5563", fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>to</span>
-            <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)}
-              className="field" style={{ flex: 1, padding: "8px 10px", fontSize: 13 }} />
-          </div>
-        </div>
 
         <button
           className="btn-primary"
@@ -812,7 +697,6 @@ export default function App() {
   const pending = currentDay.locations.length - visited;
   const progress = currentDay.locations.length ? (visited / currentDay.locations.length) * 100 : 0;
   const totalStopsCount = currentDay.locations.length + (currentDay.startLoc ? 1 : 0) + (currentDay.endLoc ? 1 : 0);
-  const overdueCount = currentMasterShops.filter(s => isOverdue(s) && !currentDayLocIds.has(s.id)).length;
   const selectedNotAdded = [...selectedShopIds].filter(id => !currentDayLocIds.has(id)).length;
 
   useEffect(() => {
@@ -847,7 +731,7 @@ export default function App() {
   }, []);
 
   // Add shop to master list — now includes frequency + hours
-  const handleAddShopToMaster = async (name, urlOrAddress, frequency, openTime, closeTime) => {
+  const handleAddShopToMaster = async (name, urlOrAddress) => {
     setModalGeocoding(true);
     try {
       const gmatch =
@@ -862,7 +746,7 @@ export default function App() {
         const geo = await geocodeAddress(urlOrAddress);
         lat = geo.lat; lng = geo.lng; address = urlOrAddress;
       }
-      const shop = { id: crypto.randomUUID(), name, address, lat, lng, frequency, openTime, closeTime, lastVisited: null, visitNote: "" };
+      const shop = { id: crypto.randomUUID(), name, address, lat, lng, visitNote: "" };
       updateMasterShops(currentLocationNum, shops => [...shops, shop]);
       setStatus(`✓ "${name}" added`);
       setShowAddShopModal(false);
@@ -902,36 +786,11 @@ export default function App() {
     setActiveTab("list");
   };
 
-  // Plan my day — auto-selects overdue shops and adds them
-  const planMyDay = () => {
-    const overdue = currentMasterShops.filter(s => isOverdue(s) && !currentDayLocIds.has(s.id));
-    if (!overdue.length) { setStatus("No overdue shops for today"); return; }
-    const toAdd = overdue.map(s => ({ ...s, visited: false, optimizedIndex: undefined }));
-    updateCurrentDay(d => ({
-      ...d,
-      locations: [...d.locations, ...toAdd],
-      optimizedOrder: null,
-      routeGeometry: null,
-    }));
-    setStatus(`✓ ${toAdd.length} overdue shop${toAdd.length > 1 ? "s" : ""} added`);
-    setActiveTab("list");
-  };
-
 const toggleVisited = (id) => {
-    const today = getTodayDate();
-    const loc = currentDay.locations.find(l => l.id === id);
     updateCurrentDay(d => ({
       ...d,
       locations: d.locations.map(l => l.id === id ? { ...l, visited: !l.visited } : l),
     }));
-    if (loc && !loc.visited) {
-      const isMaster = currentMasterShops.some(s => s.id === id);
-      if (isMaster) {
-        updateMasterShops(currentLocationNum, shops =>
-          shops.map(s => s.id === id ? { ...s, lastVisited: today } : s)
-        );
-      }
-    }
   };
   const removeLocation = (id) => {
     updateCurrentDay(d => ({ ...d, locations: d.locations.filter(l => l.id !== id), optimizedOrder: null, routeGeometry: null, totalTime: 0, totalDist: 0 }));
@@ -1510,7 +1369,7 @@ const toggleVisited = (id) => {
           {/* Status bar */}
           <div className="status-bar">
             {(optimizing || geocoding || modalGeocoding) && <div className="spinner" />}
-            <span>{status || `${locName} · ${currentMasterShops.length} shops${overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}`}</span>
+            <span>{status || `${locName} · ${currentMasterShops.length} shops`}</span>
           </div>
 
           {/* Map */}
@@ -1595,9 +1454,6 @@ const toggleVisited = (id) => {
                             <div className="loc-name">{loc.name}</div>
                             {masterShop?.visitNote && loc.visited && (
                               <div className="loc-note">"{masterShop.visitNote}"</div>
-                            )}
-                            {!loc.visited && masterShop?.lastVisited && (
-                              <div className="loc-addr">{daysSince(masterShop.lastVisited)}d since last visit</div>
                             )}
                           </div>
                           <div className="loc-actions">
